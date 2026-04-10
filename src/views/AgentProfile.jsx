@@ -588,7 +588,13 @@ function DetailsTab({ agent, onSave, onDelete, saving, saved }) {
           Authorization: `Bearer ${session.access_token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ agent_id: agent.id }),
+        body: JSON.stringify({
+          agent_id: agent.id,
+          // Pass the current origin so the OAuth callback knows whether to
+          // bounce back to prod or localhost. Validated against an allowlist
+          // on the server side. The callback appends /agents/:id itself.
+          return_url: window.location.origin,
+        }),
       })
       if (!res.ok) throw new Error(`Failed to start OAuth: ${await res.text()}`)
       const { url } = await res.json()

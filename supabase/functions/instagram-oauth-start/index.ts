@@ -8,7 +8,18 @@ import { createClient } from 'jsr:@supabase/supabase-js@2'
 const supabaseUrl = Deno.env.get('SUPABASE_URL')!
 const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const META_APP_ID = Deno.env.get('META_APP_ID') || ''
-const PUBLIC_SITE_URL = Deno.env.get('PUBLIC_SITE_URL') || 'https://bms.app'
+
+// Comma-separated list of origins the OAuth callback is allowed to
+// bounce users back to. Configurable via env so new environments don't
+// require a code change, but with sensible defaults baked in.
+const DEFAULT_ORIGINS = [
+  'https://bms-management.vercel.app',
+  'http://localhost:5173',
+  'http://localhost:4173',
+]
+const ALLOWED_RETURN_ORIGINS = (Deno.env.get('ALLOWED_RETURN_ORIGINS') || '')
+  .split(',').map(s => s.trim()).filter(Boolean)
+const allowedOrigins = ALLOWED_RETURN_ORIGINS.length ? ALLOWED_RETURN_ORIGINS : DEFAULT_ORIGINS
 
 const REDIRECT_URI = `${supabaseUrl}/functions/v1/instagram-oauth-callback`
 // Minimum scopes to publish to an IG business account
@@ -20,6 +31,16 @@ const SCOPES = [
   'instagram_content_publish',
   'instagram_manage_insights',
 ].join(',')
+
+function safeReturnUrl(raw: string | undefined): string {
+  if (!raw) return allowedOrigins[0]
+  try {
+    const u = new URL(raw)
+    const origin = `${u.protocol}//${u.host}`
+    if (allowedOrigins.includes(origin)) return raw
+  } catch {}
+  return allowedOrigins[0]
+}
 
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 })
@@ -35,7 +56,8 @@ Deno.serve(async (req) => {
   if (userErr || !userRes?.user) return new Response('Unauthorized', { status: 401 })
   const userId = userRes.user.id
 
-  const { agent_id } = await req.json().catch(() => ({}))
+  const body = await req.json().catch(() => ({}))
+  const { agent_id, return_url } = body
   if (!agent_id) return new Response('Missing agent_id', { status: 400 })
 
   // Ensure the caller actually owns this agent
@@ -59,6 +81,7 @@ Deno.serve(async (req) => {
     agent_id,
     user_id: userId,
     provider: 'instagram',
+    return_url: safeReturnUrl(return_url),
     expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
   })
 

@@ -9,7 +9,7 @@ const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const REDDIT_CLIENT_ID = Deno.env.get('REDDIT_CLIENT_ID') || ''
 const REDDIT_CLIENT_SECRET = Deno.env.get('REDDIT_CLIENT_SECRET') || ''
 const REDDIT_USER_AGENT = Deno.env.get('REDDIT_USER_AGENT') || 'web:bms-agent-runtime:v1.0'
-const PUBLIC_SITE_URL = Deno.env.get('PUBLIC_SITE_URL') || 'https://bms.app'
+const FALLBACK_SITE_URL = Deno.env.get('PUBLIC_SITE_URL') || 'https://bms-management.vercel.app'
 
 const REDIRECT_URI = `${supabaseUrl}/functions/v1/reddit-oauth-callback`
 const AUTH_BASE = 'https://www.reddit.com'
@@ -23,14 +23,15 @@ Deno.serve(async (req) => {
 
   const supabase = createClient(supabaseUrl, serviceKey)
 
-  function bounce(agentId: string | null, params: Record<string, string>) {
-    const target = new URL(`${PUBLIC_SITE_URL}/agents/${agentId || ''}`)
+  function bounce(returnBase: string, agentId: string | null, params: Record<string, string>) {
+    const base = returnBase || FALLBACK_SITE_URL
+    const target = new URL(`${base.replace(/\/$/, '')}/agents/${agentId || ''}`)
     for (const [k, v] of Object.entries(params)) target.searchParams.set(k, v)
     return Response.redirect(target.toString(), 302)
   }
 
-  if (error) return bounce(null, { reddit_error: error })
-  if (!code || !state) return bounce(null, { reddit_error: 'missing_code_or_state' })
+  if (error) return bounce(FALLBACK_SITE_URL, null, { reddit_error: error })
+  if (!code || !state) return bounce(FALLBACK_SITE_URL, null, { reddit_error: 'missing_code_or_state' })
 
   const { data: stateRow } = await supabase
     .from('oauth_states')
@@ -39,10 +40,11 @@ Deno.serve(async (req) => {
     .eq('provider', 'reddit')
     .single()
 
-  if (!stateRow) return bounce(null, { reddit_error: 'invalid_state' })
+  if (!stateRow) return bounce(FALLBACK_SITE_URL, null, { reddit_error: 'invalid_state' })
   if (new Date(stateRow.expires_at).getTime() < Date.now()) {
-    return bounce(stateRow.agent_id, { reddit_error: 'state_expired' })
+    return bounce(stateRow.return_url || FALLBACK_SITE_URL, stateRow.agent_id, { reddit_error: 'state_expired' })
   }
+  const returnBase = stateRow.return_url || FALLBACK_SITE_URL
   await supabase.from('oauth_states').delete().eq('state', state)
 
   try {
@@ -90,9 +92,9 @@ Deno.serve(async (req) => {
       description: `Reddit connected as u/${me.name}`,
     })
 
-    return bounce(stateRow.agent_id, { reddit_connected: '1' })
+    return bounce(returnBase, stateRow.agent_id, { reddit_connected: '1' })
   } catch (e) {
-    return bounce(stateRow.agent_id, {
+    return bounce(returnBase, stateRow.agent_id, {
       reddit_error: 'oauth_failed',
       reddit_error_detail: encodeURIComponent((e as Error).message || 'unknown'),
     })

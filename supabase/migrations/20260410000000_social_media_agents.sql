@@ -20,6 +20,11 @@ alter table public.agents
   add column if not exists reddit_token_expires_at timestamptz,
   add column if not exists reddit_scopes text;
 
+-- Carry the browser's origin through the OAuth roundtrip so the callback
+-- can bounce back to whichever frontend (prod or localhost) started the flow.
+alter table public.oauth_states
+  add column if not exists return_url text;
+
 -- ---------------------------------------------------------------------
 -- 2. scheduled_posts — posts queued for the dispatcher
 -- ---------------------------------------------------------------------

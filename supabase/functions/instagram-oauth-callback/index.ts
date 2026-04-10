@@ -10,7 +10,7 @@ const supabaseUrl = Deno.env.get('SUPABASE_URL')!
 const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const META_APP_ID = Deno.env.get('META_APP_ID') || ''
 const META_APP_SECRET = Deno.env.get('META_APP_SECRET') || ''
-const PUBLIC_SITE_URL = Deno.env.get('PUBLIC_SITE_URL') || 'https://bms.app'
+const FALLBACK_SITE_URL = Deno.env.get('PUBLIC_SITE_URL') || 'https://bms-management.vercel.app'
 
 const REDIRECT_URI = `${supabaseUrl}/functions/v1/instagram-oauth-callback`
 const GRAPH_BASE = 'https://graph.facebook.com/v21.0'
@@ -23,17 +23,18 @@ Deno.serve(async (req) => {
 
   const supabase = createClient(supabaseUrl, serviceKey)
 
-  function bounce(agentId: string | null, params: Record<string, string>) {
-    const target = new URL(`${PUBLIC_SITE_URL}/agents/${agentId || ''}`)
+  function bounce(returnBase: string, agentId: string | null, params: Record<string, string>) {
+    const base = returnBase || FALLBACK_SITE_URL
+    const target = new URL(`${base.replace(/\/$/, '')}/agents/${agentId || ''}`)
     for (const [k, v] of Object.entries(params)) target.searchParams.set(k, v)
     return Response.redirect(target.toString(), 302)
   }
 
   if (error) {
-    return bounce(null, { instagram_error: error })
+    return bounce(FALLBACK_SITE_URL, null, { instagram_error: error })
   }
   if (!code || !state) {
-    return bounce(null, { instagram_error: 'missing_code_or_state' })
+    return bounce(FALLBACK_SITE_URL, null, { instagram_error: 'missing_code_or_state' })
   }
 
   // Validate state
@@ -44,10 +45,12 @@ Deno.serve(async (req) => {
     .eq('provider', 'instagram')
     .single()
 
-  if (!stateRow) return bounce(null, { instagram_error: 'invalid_state' })
+  if (!stateRow) return bounce(FALLBACK_SITE_URL, null, { instagram_error: 'invalid_state' })
   if (new Date(stateRow.expires_at).getTime() < Date.now()) {
-    return bounce(stateRow.agent_id, { instagram_error: 'state_expired' })
+    return bounce(stateRow.return_url || FALLBACK_SITE_URL, stateRow.agent_id, { instagram_error: 'state_expired' })
   }
+
+  const returnBase = stateRow.return_url || FALLBACK_SITE_URL
 
   // Burn the state row immediately
   await supabase.from('oauth_states').delete().eq('state', state)
@@ -119,9 +122,9 @@ Deno.serve(async (req) => {
       description: `Instagram connected as @${prof.username || 'unknown'}`,
     })
 
-    return bounce(stateRow.agent_id, { instagram_connected: '1' })
+    return bounce(returnBase, stateRow.agent_id, { instagram_connected: '1' })
   } catch (e) {
-    return bounce(stateRow.agent_id, {
+    return bounce(returnBase, stateRow.agent_id, {
       instagram_error: 'oauth_failed',
       instagram_error_detail: encodeURIComponent((e as Error).message || 'unknown'),
     })
