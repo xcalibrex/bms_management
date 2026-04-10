@@ -1,27 +1,94 @@
-const stats = [
-  { label: 'Total Agents', value: '12' },
-  { label: 'Active', value: '8' },
-  { label: 'Images Generated', value: '3.4k' },
-  { label: 'Fanvue Connected', value: '6' },
-]
+import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { supabase } from '../lib/supabase'
+import { timeAgo } from '../lib/agentHelpers'
 
-const recentAgents = [
-  { name: 'Atlas', model: 'GPT-4o', status: 'active', lastActive: '2 min ago', integrations: ['Fanvue', 'fal.ai'] },
-  { name: 'Nova', model: 'Claude 3.5', status: 'active', lastActive: '5 min ago', integrations: ['Fanvue', 'fal.ai'] },
-  { name: 'Echo', model: 'Gemini Pro', status: 'idle', lastActive: '1 hr ago', integrations: ['fal.ai'] },
-  { name: 'Sage', model: 'GPT-4o', status: 'active', lastActive: '12 min ago', integrations: ['Fanvue'] },
-  { name: 'Drift', model: 'Mistral Large', status: 'idle', lastActive: '3 hr ago', integrations: [] },
-]
-
-const activity = [
-  { text: 'Atlas generated 12 images via fal.ai', time: '2 min ago' },
-  { text: 'Nova LoRA model updated to anime-style-v2', time: '1 hr ago' },
-  { text: 'Echo connected to fal.ai', time: '3 hr ago' },
-  { text: 'Sage Fanvue profile synced', time: '5 hr ago' },
-  { text: 'Drift personality config updated', time: '1 day ago' },
-]
+function getMonthStart() {
+  const d = new Date()
+  return new Date(d.getFullYear(), d.getMonth(), 1).toISOString()
+}
 
 export default function Dashboard() {
+  const navigate = useNavigate()
+  const [loading, setLoading] = useState(true)
+  const [stats, setStats] = useState({
+    totalAgents: 0,
+    activeAgents: 0,
+    totalFans: 0,
+    revenueThisMonth: 0,
+  })
+  const [recentPayments, setRecentPayments] = useState([])
+  const [topAgents, setTopAgents] = useState([])
+
+  useEffect(() => {
+    fetchDashboard()
+  }, [])
+
+  async function fetchDashboard() {
+    const monthStart = getMonthStart()
+
+    // Fetch all agents (we need them for the top agents list and stats)
+    const { data: agents } = await supabase.from('agents').select('*')
+    const agentList = agents || []
+    const agentMap = Object.fromEntries(agentList.map(a => [a.id, a]))
+
+    // Fans count across user's agents
+    const { count: fanCount } = await supabase
+      .from('fans')
+      .select('id', { count: 'exact', head: true })
+
+    // Revenue this month — sum across all agents
+    const { data: monthRevenue } = await supabase
+      .from('revenue')
+      .select('amount, agent_id')
+      .gte('created_at', monthStart)
+
+    const revenueTotal = (monthRevenue || []).reduce((sum, r) => sum + Number(r.amount || 0), 0)
+
+    // Aggregate revenue per agent for "top agents this month"
+    const agentRevenue = {}
+    ;(monthRevenue || []).forEach(r => {
+      agentRevenue[r.agent_id] = (agentRevenue[r.agent_id] || 0) + Number(r.amount || 0)
+    })
+    const topAgentList = Object.entries(agentRevenue)
+      .map(([agentId, revenue]) => ({ agent: agentMap[agentId], revenue }))
+      .filter(item => item.agent)
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, 5)
+
+    // Recent payments — last 8 revenue events with fan display_name
+    const { data: payments } = await supabase
+      .from('revenue')
+      .select('id, amount, revenue_type, created_at, agent_id, fan_id, fans(display_name)')
+      .order('created_at', { ascending: false })
+      .limit(8)
+
+    setStats({
+      totalAgents: agentList.length,
+      activeAgents: agentList.filter(a => a.status === 'active').length,
+      totalFans: fanCount || 0,
+      revenueThisMonth: revenueTotal,
+    })
+    setTopAgents(topAgentList)
+    setRecentPayments((payments || []).map(p => ({
+      ...p,
+      agent: agentMap[p.agent_id],
+      fan_name: p.fans?.display_name || 'Anonymous',
+    })))
+    setLoading(false)
+  }
+
+  if (loading) {
+    return <div style={{ color: 'var(--text-tertiary)', fontSize: 13, padding: 48 }}>Loading...</div>
+  }
+
+  const statCards = [
+    { label: 'Total Agents', value: stats.totalAgents.toString(), sub: `${stats.activeAgents} active` },
+    { label: 'Total Fans', value: stats.totalFans.toLocaleString(), sub: 'across all agents' },
+    { label: 'Revenue (Month)', value: `$${stats.revenueThisMonth.toFixed(2)}`, sub: new Date().toLocaleString('default', { month: 'long' }) },
+    { label: 'Active Agents', value: stats.activeAgents.toString(), sub: `of ${stats.totalAgents} total` },
+  ]
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
       <div>
@@ -30,7 +97,7 @@ export default function Dashboard() {
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14 }}>
-        {stats.map(s => (
+        {statCards.map(s => (
           <div key={s.label} style={{
             background: 'var(--surface)',
             borderRadius: 'var(--radius)',
@@ -38,64 +105,87 @@ export default function Dashboard() {
           }}>
             <div style={{ fontSize: 11, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 8 }}>{s.label}</div>
             <div style={{ fontSize: 24, fontWeight: 600, letterSpacing: '-0.5px' }}>{s.value}</div>
+            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>{s.sub}</div>
           </div>
         ))}
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+        {/* Top Agents */}
         <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius)', padding: 20 }}>
-          <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 14, color: 'var(--text-secondary)' }}>Recent Agents</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-            {recentAgents.map(a => (
-              <div key={a.name} style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                padding: '10px 12px', borderRadius: 10, cursor: 'pointer', transition: 'background 0.15s',
-              }}
-              onMouseEnter={e => e.currentTarget.style.background = 'var(--surface-hover)'}
-              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <div style={{
-                    width: 30, height: 30, borderRadius: 10,
-                    background: 'var(--surface-active)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)',
-                  }}>{a.name[0]}</div>
-                  <div>
-                    <div style={{ fontSize: 13, fontWeight: 500 }}>{a.name}</div>
-                    <div style={{ fontSize: 11, color: 'var(--text-tertiary)', display: 'flex', gap: 6 }}>
-                      <span>{a.model}</span>
-                      {a.integrations.length > 0 && (
-                        <span style={{ color: 'rgba(255,255,255,0.2)' }}>{a.integrations.join(' · ')}</span>
-                      )}
+          <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 14, color: 'var(--text-secondary)' }}>Top Agents This Month</div>
+          {topAgents.length === 0 ? (
+            <div style={{ color: 'var(--text-tertiary)', fontSize: 12, padding: '24px 0', textAlign: 'center' }}>
+              No revenue yet this month
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {topAgents.map(({ agent, revenue }, i) => (
+                <div key={agent.id} style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '10px 12px', borderRadius: 10, cursor: 'pointer', transition: 'background 0.15s',
+                }}
+                onClick={() => navigate(`/agents/${agent.id}`)}
+                onMouseEnter={e => e.currentTarget.style.background = 'var(--surface-hover)'}
+                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div style={{
+                      width: 20, fontSize: 10, color: 'var(--text-tertiary)', textAlign: 'center',
+                    }}>{i + 1}</div>
+                    <div style={{
+                      width: 30, height: 30, borderRadius: 10, background: 'var(--surface-active)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)',
+                    }}>{agent.name?.[0]}</div>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 500 }}>{agent.name}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{agent.model}</div>
                     </div>
                   </div>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>${revenue.toFixed(2)}</div>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <div style={{
-                    width: 6, height: 6, borderRadius: '50%',
-                    background: a.status === 'active' ? 'rgba(74, 222, 128, 0.7)' : 'rgba(255, 255, 255, 0.15)',
-                  }} />
-                  <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{a.lastActive}</span>
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
 
+        {/* Recent Payments */}
         <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius)', padding: 20 }}>
-          <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 14, color: 'var(--text-secondary)' }}>Activity</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-            {activity.map((a, i) => (
-              <div key={i} style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                padding: '10px 12px', borderRadius: 10,
-              }}>
-                <span style={{ fontSize: 13 }}>{a.text}</span>
-                <span style={{ fontSize: 11, color: 'var(--text-tertiary)', whiteSpace: 'nowrap', marginLeft: 12 }}>{a.time}</span>
-              </div>
-            ))}
-          </div>
+          <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 14, color: 'var(--text-secondary)' }}>Recent Payments</div>
+          {recentPayments.length === 0 ? (
+            <div style={{ color: 'var(--text-tertiary)', fontSize: 12, padding: '24px 0', textAlign: 'center' }}>
+              No payments yet
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {recentPayments.map(p => (
+                <div key={p.id} style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '10px 12px', borderRadius: 10, cursor: 'pointer', transition: 'background 0.15s',
+                }}
+                onClick={() => p.agent && navigate(`/agents/${p.agent.id}`)}
+                onMouseEnter={e => e.currentTarget.style.background = 'var(--surface-hover)'}
+                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
+                    <span style={{
+                      fontSize: 10, padding: '2px 8px', borderRadius: 20,
+                      background: 'rgba(255,255,255,0.06)', color: 'var(--text-tertiary)',
+                      textTransform: 'capitalize', flexShrink: 0,
+                    }}>{p.revenue_type}</span>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {p.fan_name} <span style={{ color: 'var(--text-tertiary)', fontWeight: 400 }}>→ {p.agent?.name || 'Unknown'}</span>
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{timeAgo(p.created_at)}</div>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: 'rgba(74, 222, 128, 0.9)' }}>+${Number(p.amount).toFixed(2)}</div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>

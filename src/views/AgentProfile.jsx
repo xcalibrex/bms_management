@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase'
 import { createFanvueClient } from '../lib/fanvue'
 import { models, imageStyles, getGradient, Pill, StagePill, timeAgo } from '../lib/agentHelpers'
 
-const tabList = ['Stats', 'Fans', 'Messages', 'Content', 'Details']
+const tabList = ['Stats', 'Activity', 'Fans', 'Messages', 'Content', 'Details']
 
 const dateRanges = [
   { label: '7D', days: 7 },
@@ -60,6 +60,11 @@ export default function AgentProfile() {
     try {
       if (tab === 'Stats') {
         data = await fetchStatsData(agent, client, useFanvue, rangeStart, dateRange)
+      } else if (tab === 'Activity') {
+        let q = supabase.from('agent_events').select('*').eq('agent_id', agent.id).order('created_at', { ascending: false }).limit(100)
+        if (rangeStartISO) q = q.gte('created_at', rangeStartISO)
+        const res = await q
+        data = res.data || []
       } else if (tab === 'Fans') {
         if (useFanvue) {
           const res = await client.getSubscribers({ limit: 50 })
@@ -211,7 +216,12 @@ export default function AgentProfile() {
       {/* Tab bar */}
       <div style={{ display: 'flex', gap: 4 }}>
         {tabList.map(t => (
-          <button key={t} style={tabStyle(tab === t)} onClick={() => setTab(t)}>{t}</button>
+          <button key={t} style={tabStyle(tab === t)} onClick={() => {
+            if (t === tab) return
+            setTab(t)
+            setTabData(null)
+            setTabLoading(true)
+          }}>{t}</button>
         ))}
       </div>
 
@@ -221,6 +231,7 @@ export default function AgentProfile() {
       ) : (
         <>
           {tab === 'Stats' && <StatsTab data={tabData} dateRange={dateRange} />}
+          {tab === 'Activity' && <ActivityTab data={tabData} />}
           {tab === 'Fans' && <FansTab data={tabData} />}
           {tab === 'Messages' && <MessagesTab data={tabData} agentName={agent.name} />}
           {tab === 'Content' && <ContentTab data={tabData} />}
@@ -250,7 +261,7 @@ export default function AgentProfile() {
 }
 
 function FansTab({ data }) {
-  if (data.length === 0) {
+  if (!Array.isArray(data) || data.length === 0) {
     return <Empty text="No fans yet" />
   }
   return (
@@ -290,7 +301,7 @@ function FansTab({ data }) {
 }
 
 function MessagesTab({ data, agentName }) {
-  if (data.length === 0) {
+  if (!Array.isArray(data) || data.length === 0) {
     return <Empty text="No messages yet" />
   }
   return (
@@ -315,7 +326,7 @@ function MessagesTab({ data, agentName }) {
 }
 
 function ContentTab({ data }) {
-  if (data.length === 0) {
+  if (!Array.isArray(data) || data.length === 0) {
     return <Empty text="No content generated yet" />
   }
   return (
@@ -350,6 +361,14 @@ function ContentTab({ data }) {
   )
 }
 
+const RUNTIME_MODELS = [
+  { id: 'sao10k/l3.1-euryale-70b', label: 'Euryale 70B (Recommended)', cost: '$0.70 / $0.80' },
+  { id: 'anthracite-org/magnum-v4-72b', label: 'Magnum V4 72B (Premium)', cost: '$1.88 / $2.25' },
+  { id: 'nous/hermes-3-llama-3.1-405b', label: 'Hermes 3 405B (Top quality)', cost: '$1.79 / $2.49' },
+  { id: 'thedrummer/unslopnemo-12b', label: 'UnslopNemo 12B (Cheapest)', cost: '$0.40 / $0.40' },
+  { id: 'openai/gpt-4o-mini', label: 'GPT-4o-mini (SFW only)', cost: '$0.15 / $0.60' },
+]
+
 function DetailsTab({ agent, onSave, onDelete, saving, saved }) {
   const [form, setForm] = useState({
     name: agent.name || '',
@@ -363,6 +382,57 @@ function DetailsTab({ agent, onSave, onDelete, saving, saved }) {
     image_style: agent.image_style || 'None',
   })
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [webhookCopied, setWebhookCopied] = useState(false)
+
+  // Runtime settings (from agent_settings table)
+  const [runtimeSettings, setRuntimeSettings] = useState({
+    llm_model: 'sao10k/l3.1-euryale-70b',
+    llm_model_vip: 'anthracite-org/magnum-v4-72b',
+    llm_temperature: 0.85,
+    response_delay_min: 30,
+    response_delay_max: 240,
+    nsfw_enabled: false,
+    ppv_price_default: 9.99,
+  })
+  const [runtimeSaved, setRuntimeSaved] = useState(false)
+
+  useEffect(() => {
+    async function loadSettings() {
+      const { data } = await supabase.from('agent_settings').select('*').eq('agent_id', agent.id).single()
+      if (data) {
+        setRuntimeSettings({
+          llm_model: data.llm_model || 'sao10k/l3.1-euryale-70b',
+          llm_model_vip: data.llm_model_vip || 'anthracite-org/magnum-v4-72b',
+          llm_temperature: data.llm_temperature ?? 0.85,
+          response_delay_min: data.response_delay_min ?? 30,
+          response_delay_max: data.response_delay_max ?? 240,
+          nsfw_enabled: data.nsfw_enabled ?? false,
+          ppv_price_default: data.ppv_price_default ?? 9.99,
+        })
+      }
+    }
+    loadSettings()
+  }, [agent.id])
+
+  const updateRuntime = (key, value) => setRuntimeSettings(prev => ({ ...prev, [key]: value }))
+
+  const saveRuntimeSettings = async () => {
+    await supabase.from('agent_settings').upsert({
+      agent_id: agent.id,
+      ...runtimeSettings,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'agent_id' })
+    setRuntimeSaved(true)
+    setTimeout(() => setRuntimeSaved(false), 2000)
+  }
+
+  const webhookUrl = `https://wzllrjbumbxvvozcwlzj.supabase.co/functions/v1/fanvue-webhook/${agent.id}`
+
+  const copyWebhook = () => {
+    navigator.clipboard.writeText(webhookUrl)
+    setWebhookCopied(true)
+    setTimeout(() => setWebhookCopied(false), 2000)
+  }
 
   // Fanvue connect state
   const [fanvueKey, setFanvueKey] = useState(agent.fanvue_api_key || '')
@@ -547,6 +617,128 @@ function DetailsTab({ agent, onSave, onDelete, saving, saved }) {
         </div>
       </div>
 
+      {/* Webhook URL */}
+      <div style={sectionStyle}>
+        <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)' }}>Webhook URL</div>
+        <div style={{ fontSize: 11, color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
+          Paste this URL into your agent's Fanvue webhook settings. Fanvue will send fan messages, tips, and purchases here, and the agent will respond automatically.
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input
+            readOnly
+            value={webhookUrl}
+            style={{ ...inputStyle, fontFamily: 'monospace', fontSize: 11 }}
+            onClick={e => e.target.select()}
+          />
+          <button onClick={copyWebhook}
+            style={{
+              padding: '8px 18px', fontSize: 12, borderRadius: 10,
+              background: webhookCopied ? 'rgba(74, 222, 128, 0.15)' : 'rgba(255,255,255,0.08)',
+              color: webhookCopied ? 'rgba(74, 222, 128, 0.9)' : 'var(--text-primary)',
+              fontWeight: 500, transition: 'all 0.15s', whiteSpace: 'nowrap',
+            }}
+          >{webhookCopied ? 'Copied' : 'Copy'}</button>
+        </div>
+      </div>
+
+      {/* Runtime / LLM Configuration */}
+      <div style={sectionStyle}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)' }}>Runtime Configuration</div>
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
+          Configure the LLM and behavior of this agent's autonomous loop. Models powered by OpenRouter (set your key in Settings).
+        </div>
+
+        <div>
+          <label style={labelStyle}>Standard Model (new / engaged / paying fans)</label>
+          <select
+            style={{ ...inputStyle, cursor: 'pointer', appearance: 'none' }}
+            value={runtimeSettings.llm_model}
+            onChange={e => updateRuntime('llm_model', e.target.value)}
+          >
+            {RUNTIME_MODELS.map(m => <option key={m.id} value={m.id}>{m.label} — {m.cost} per 1M</option>)}
+          </select>
+        </div>
+
+        <div>
+          <label style={labelStyle}>VIP Model (fans with $100+ spent)</label>
+          <select
+            style={{ ...inputStyle, cursor: 'pointer', appearance: 'none' }}
+            value={runtimeSettings.llm_model_vip}
+            onChange={e => updateRuntime('llm_model_vip', e.target.value)}
+          >
+            {RUNTIME_MODELS.map(m => <option key={m.id} value={m.id}>{m.label} — {m.cost} per 1M</option>)}
+          </select>
+        </div>
+
+        <div>
+          <label style={labelStyle}>Temperature — {runtimeSettings.llm_temperature}</label>
+          <input
+            type="range" min="0" max="1.5" step="0.05"
+            value={runtimeSettings.llm_temperature}
+            onChange={e => updateRuntime('llm_temperature', parseFloat(e.target.value))}
+            style={{ width: '100%', accentColor: 'rgba(255,255,255,0.4)', cursor: 'pointer' }}
+          />
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-tertiary)', marginTop: 2 }}>
+            <span>Consistent</span><span>Wild</span>
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div>
+            <label style={labelStyle}>Min Reply Delay — {runtimeSettings.response_delay_min}s</label>
+            <input
+              type="range" min="0" max="600" step="5"
+              value={runtimeSettings.response_delay_min}
+              onChange={e => updateRuntime('response_delay_min', parseInt(e.target.value))}
+              style={{ width: '100%', accentColor: 'rgba(255,255,255,0.4)', cursor: 'pointer' }}
+            />
+          </div>
+          <div>
+            <label style={labelStyle}>Max Reply Delay — {runtimeSettings.response_delay_max}s</label>
+            <input
+              type="range" min="30" max="1800" step="30"
+              value={runtimeSettings.response_delay_max}
+              onChange={e => updateRuntime('response_delay_max', parseInt(e.target.value))}
+              style={{ width: '100%', accentColor: 'rgba(255,255,255,0.4)', cursor: 'pointer' }}
+            />
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0' }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 500 }}>NSFW Enabled</div>
+            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2 }}>Allow this agent to generate explicit content (paying/VIP fans only)</div>
+          </div>
+          <div style={toggleStyle(runtimeSettings.nsfw_enabled)} onClick={() => updateRuntime('nsfw_enabled', !runtimeSettings.nsfw_enabled)}>
+            <div style={toggleDot(runtimeSettings.nsfw_enabled)} />
+          </div>
+        </div>
+
+        <div>
+          <label style={labelStyle}>Default PPV Price — ${runtimeSettings.ppv_price_default}</label>
+          <input
+            style={inputStyle}
+            type="number"
+            step="0.01"
+            value={runtimeSettings.ppv_price_default}
+            onChange={e => updateRuntime('ppv_price_default', parseFloat(e.target.value) || 0)}
+          />
+        </div>
+
+        <button onClick={saveRuntimeSettings}
+          style={{
+            padding: '8px 18px', fontSize: 12, borderRadius: 10,
+            background: runtimeSaved ? 'rgba(74, 222, 128, 0.15)' : 'rgba(255,255,255,0.08)',
+            color: runtimeSaved ? 'rgba(74, 222, 128, 0.9)' : 'var(--text-primary)',
+            fontWeight: 500, transition: 'all 0.15s', alignSelf: 'flex-start',
+          }}
+          onMouseEnter={e => { if (!runtimeSaved) e.currentTarget.style.background = 'rgba(255,255,255,0.12)' }}
+          onMouseLeave={e => { if (!runtimeSaved) e.currentTarget.style.background = 'rgba(255,255,255,0.08)' }}
+        >{runtimeSaved ? 'Saved' : 'Save Runtime Settings'}</button>
+      </div>
+
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
           {!confirmDelete ? (
@@ -591,6 +783,52 @@ function Empty({ text }) {
       padding: '48px 0', textAlign: 'center',
       color: 'var(--text-tertiary)', fontSize: 13,
     }}>{text}</div>
+  )
+}
+
+const EVENT_COLORS = {
+  message_received: 'rgba(96, 165, 250, 0.8)',
+  message_sent: 'rgba(74, 222, 128, 0.8)',
+  reply_scheduled: 'rgba(255, 255, 255, 0.5)',
+  image_generated: 'rgba(192, 132, 252, 0.8)',
+  memories_extracted: 'rgba(250, 204, 21, 0.7)',
+  stage_changed: 'rgba(74, 222, 128, 0.9)',
+  error: 'rgba(255, 120, 120, 0.9)',
+}
+
+function ActivityTab({ data }) {
+  if (!Array.isArray(data) || data.length === 0) {
+    return <Empty text="No activity yet" />
+  }
+
+  return (
+    <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius)', padding: 6 }}>
+      {data.map(ev => {
+        const color = EVENT_COLORS[ev.event_type] || 'rgba(255,255,255,0.4)'
+        const label = ev.event_type.replace(/_/g, ' ')
+        return (
+          <div key={ev.id} style={{
+            display: 'flex', alignItems: 'flex-start', gap: 12,
+            padding: '12px 14px', borderRadius: 10, transition: 'background 0.15s',
+          }}
+          onMouseEnter={e => e.currentTarget.style.background = 'var(--surface-hover)'}
+          onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+          >
+            <div style={{
+              width: 8, height: 8, borderRadius: '50%',
+              background: color, flexShrink: 0, marginTop: 6,
+            }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
+                <span style={{ fontSize: 11, fontWeight: 500, color: 'var(--text-secondary)', textTransform: 'capitalize' }}>{label}</span>
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-primary)', lineHeight: 1.4 }}>{ev.description}</div>
+            </div>
+            <span style={{ fontSize: 10, color: 'var(--text-tertiary)', whiteSpace: 'nowrap' }}>{timeAgo(ev.created_at)}</span>
+          </div>
+        )
+      })}
+    </div>
   )
 }
 
@@ -711,7 +949,7 @@ async function fetchStatsData(agent, client, useFanvue, rangeStart, days) {
 }
 
 function StatsTab({ data, dateRange }) {
-  if (!data || !data.series) return <Empty text="No stats available" />
+  if (!data || Array.isArray(data) || !data.series) return <Empty text="No stats available" />
 
   const { totalRevenue, totalFans, totalMessages, series } = data
 

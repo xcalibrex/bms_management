@@ -10,24 +10,17 @@ export default function Settings() {
   const [falaiKey, setFalaiKey] = useState(profile?.falai_api_key || '')
   const [falaiSaved, setFalaiSaved] = useState(false)
 
-  const [settings, setSettings] = useState({
-    apiKey: '',
-    defaultModel: 'GPT-4o',
-    maxTokens: 4096,
-    defaultTemp: 0.7,
-    streamResponses: true,
-    logConversations: true,
-    autoSave: true,
-  })
+  // OpenRouter (account level)
+  const [openrouterKey, setOpenrouterKey] = useState(profile?.openrouter_api_key || '')
+  const [openrouterSaved, setOpenrouterSaved] = useState(false)
 
   useEffect(() => {
     if (profile) {
       setProfileName(profile.name || '')
       setFalaiKey(profile.falai_api_key || '')
+      setOpenrouterKey(profile.openrouter_api_key || '')
     }
   }, [profile])
-
-  const update = (key, value) => setSettings(prev => ({ ...prev, [key]: value }))
 
   const handleProfileSave = async () => {
     await updateProfile({ name: profileName })
@@ -41,7 +34,11 @@ export default function Settings() {
     setTimeout(() => setFalaiSaved(false), 2000)
   }
 
-  const models = ['GPT-4o', 'Claude 3.5 Sonnet', 'Gemini Pro', 'Mistral Large', 'Llama 3.1 70B']
+  const handleOpenrouterSave = async () => {
+    await updateProfile({ openrouter_api_key: openrouterKey.trim() || null })
+    setOpenrouterSaved(true)
+    setTimeout(() => setOpenrouterSaved(false), 2000)
+  }
 
   const labelStyle = {
     fontSize: 11, color: 'var(--text-tertiary)', textTransform: 'uppercase',
@@ -55,21 +52,6 @@ export default function Settings() {
     background: 'var(--surface)', borderRadius: 'var(--radius)', padding: 22,
     display: 'flex', flexDirection: 'column', gap: 16,
   }
-  const toggleStyle = (active) => ({
-    width: 36, height: 20, borderRadius: 10,
-    background: active ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.08)',
-    position: 'relative', cursor: 'pointer', transition: 'background 0.2s', flexShrink: 0,
-  })
-  const toggleDot = (active) => ({
-    width: 14, height: 14, borderRadius: '50%',
-    background: active ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.3)',
-    position: 'absolute', top: 3, left: active ? 19 : 3, transition: 'all 0.2s',
-  })
-  const Toggle = ({ active, onToggle }) => (
-    <div style={toggleStyle(active)} onClick={onToggle}>
-      <div style={toggleDot(active)} />
-    </div>
-  )
 
   const initial = (profile?.name || user?.email || '?')[0].toUpperCase()
 
@@ -115,6 +97,33 @@ export default function Settings() {
         </div>
       </div>
 
+      {/* OpenRouter (account level) */}
+      <div style={sectionStyle}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)' }}>OpenRouter</div>
+          {profile?.openrouter_api_key && (
+            <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 20, background: 'rgba(74, 222, 128, 0.1)', color: 'rgba(74, 222, 128, 0.8)' }}>Configured</span>
+          )}
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
+          Powers all your agents' LLM responses. Get a key at openrouter.ai/keys. Recommended models: <code style={{ background: 'rgba(255,255,255,0.05)', padding: '1px 5px', borderRadius: 4 }}>sao10k/l3.1-euryale-70b</code> for standard, <code style={{ background: 'rgba(255,255,255,0.05)', padding: '1px 5px', borderRadius: 4 }}>anthracite-org/magnum-v4-72b</code> for VIP.
+        </div>
+        <div>
+          <label style={labelStyle}>API Key</label>
+          <input style={inputStyle} value={openrouterKey} onChange={e => setOpenrouterKey(e.target.value)} type="password" placeholder="sk-or-..." />
+        </div>
+        <button onClick={handleOpenrouterSave}
+          style={{
+            padding: '8px 18px', fontSize: 12, borderRadius: 10,
+            background: openrouterSaved ? 'rgba(74, 222, 128, 0.15)' : 'rgba(255,255,255,0.08)',
+            color: openrouterSaved ? 'rgba(74, 222, 128, 0.9)' : 'var(--text-primary)',
+            fontWeight: 500, transition: 'all 0.15s', alignSelf: 'flex-start',
+          }}
+          onMouseEnter={e => { if (!openrouterSaved) e.currentTarget.style.background = 'rgba(255,255,255,0.12)' }}
+          onMouseLeave={e => { if (!openrouterSaved) e.currentTarget.style.background = 'rgba(255,255,255,0.08)' }}
+        >{openrouterSaved ? 'Saved' : 'Save Key'}</button>
+      </div>
+
       {/* fal.ai integration (account level) */}
       <div style={sectionStyle}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -124,7 +133,7 @@ export default function Settings() {
           )}
         </div>
         <div style={{ fontSize: 11, color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
-          Shared across all your agents for image generation and LoRA models. Fanvue API keys are set per agent in each agent's profile.
+          Powers image generation across all agents. LoRA models are configured per-agent in their profile.
         </div>
         <div>
           <label style={labelStyle}>API Key</label>
@@ -142,55 +151,6 @@ export default function Settings() {
         >{falaiSaved ? 'Saved' : 'Save Key'}</button>
       </div>
 
-      {/* Model config + Preferences */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-        <div style={sectionStyle}>
-          <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)' }}>Model Configuration</div>
-          <div>
-            <label style={labelStyle}>LLM API Key</label>
-            <input style={inputStyle} value={settings.apiKey} onChange={e => update('apiKey', e.target.value)} type="password" placeholder="sk-..." />
-          </div>
-          <div>
-            <label style={labelStyle}>Default Model</label>
-            <select style={{ ...inputStyle, cursor: 'pointer', appearance: 'none' }} value={settings.defaultModel} onChange={e => update('defaultModel', e.target.value)}>
-              {models.map(m => <option key={m} value={m}>{m}</option>)}
-            </select>
-          </div>
-          <div>
-            <label style={labelStyle}>Max Tokens</label>
-            <input style={inputStyle} type="number" value={settings.maxTokens} onChange={e => update('maxTokens', parseInt(e.target.value))} />
-          </div>
-          <div>
-            <label style={labelStyle}>Default Temperature — {settings.defaultTemp}</label>
-            <input type="range" min="0" max="1" step="0.1" value={settings.defaultTemp} onChange={e => update('defaultTemp', parseFloat(e.target.value))} style={{ width: '100%', accentColor: 'rgba(255,255,255,0.4)', cursor: 'pointer' }} />
-          </div>
-        </div>
-
-        <div style={sectionStyle}>
-          <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)' }}>Preferences</div>
-          {[
-            { key: 'streamResponses', label: 'Stream Responses', desc: 'Show responses as they generate' },
-            { key: 'logConversations', label: 'Log Conversations', desc: 'Save conversation history' },
-            { key: 'autoSave', label: 'Auto-save Changes', desc: 'Automatically save agent configurations' },
-          ].map(item => (
-            <div key={item.key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0' }}>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 500 }}>{item.label}</div>
-                <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2 }}>{item.desc}</div>
-              </div>
-              <Toggle active={settings[item.key]} onToggle={() => update(item.key, !settings[item.key])} />
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-        <button
-          style={{ padding: '8px 22px', fontSize: 13, borderRadius: 10, background: 'rgba(255,255,255,0.1)', color: 'var(--text-primary)', fontWeight: 500, transition: 'background 0.15s' }}
-          onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.15)'}
-          onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
-        >Save Settings</button>
-      </div>
     </div>
   )
 }
