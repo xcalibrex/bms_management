@@ -186,4 +186,41 @@ export const AGENT_TOOLS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'post_to_instagram',
+      description: 'Schedule a post to this agent\'s connected Instagram Business account. SFW only — Instagram will reject explicit content. Use for funnel/top-of-funnel content to drive traffic to Fanvue.',
+      parameters: {
+        type: 'object',
+        properties: {
+          caption: { type: 'string', description: 'Post caption (max ~2200 chars). Include hashtags inline.' },
+          content_id: { type: 'string', description: 'content_id of a previously generated image to post. Must be SFW.' },
+          delay_seconds: { type: 'integer', description: 'Delay before posting (0 = post immediately via dispatcher)' },
+        },
+        required: ['caption', 'content_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'post_to_reddit',
+      description: 'Schedule a post to a subreddit from this agent\'s connected Reddit account. NSFW allowed on NSFW subreddits only. Check subreddit rules before posting.',
+      parameters: {
+        type: 'object',
+        properties: {
+          subreddit: { type: 'string', description: 'Target subreddit name (without /r/)' },
+          title: { type: 'string', description: 'Post title (max 300 chars)' },
+          kind: { type: 'string', enum: ['image', 'text', 'link'], description: 'Post type' },
+          content_id: { type: 'string', description: 'For image posts: content_id of an image to post' },
+          body: { type: 'string', description: 'For text posts: the selftext body' },
+          url: { type: 'string', description: 'For link posts: the URL' },
+          nsfw: { type: 'boolean', description: 'Mark as NSFW (required for NSFW subs)' },
+          delay_seconds: { type: 'integer', description: 'Delay before posting (0 = immediate)' },
+        },
+        required: ['subreddit', 'title', 'kind'],
+      },
+    },
+  },
 ]

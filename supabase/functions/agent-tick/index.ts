@@ -103,6 +103,43 @@ const AGENT_TOOLS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'post_to_instagram',
+      description: 'Schedule a post to this agent\'s connected Instagram Business account. SFW only. Use for funnel content to drive traffic to Fanvue.',
+      parameters: {
+        type: 'object',
+        properties: {
+          caption: { type: 'string', description: 'Post caption (hashtags inline)' },
+          content_id: { type: 'string', description: 'content_id of an SFW image from generate_image' },
+          delay_seconds: { type: 'integer', description: 'Delay before posting (0 = dispatcher posts ASAP)' },
+        },
+        required: ['caption', 'content_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'post_to_reddit',
+      description: 'Schedule a post to a subreddit from this agent\'s connected Reddit account. NSFW allowed on NSFW subs only.',
+      parameters: {
+        type: 'object',
+        properties: {
+          subreddit: { type: 'string' },
+          title: { type: 'string' },
+          kind: { type: 'string', enum: ['image', 'text', 'link'] },
+          content_id: { type: 'string', description: 'For image posts' },
+          body: { type: 'string', description: 'For text posts' },
+          url: { type: 'string', description: 'For link posts' },
+          nsfw: { type: 'boolean' },
+          delay_seconds: { type: 'integer' },
+        },
+        required: ['subreddit', 'title', 'kind'],
+      },
+    },
+  },
 ]
 
 Deno.serve(async (req) => {
@@ -352,6 +389,97 @@ async function runAgentLoop({ supabase, agent, fan, chatId, openrouterKey, falai
             description: `${fan.relationship_stage} → ${args.new_stage}: ${args.reason}`,
           })
           result = { updated: true }
+        } else if (fnName === 'post_to_instagram') {
+          if (!agent.instagram_connected) {
+            result = { error: 'Instagram not connected for this agent' }
+          } else if (!args.content_id) {
+            result = { error: 'content_id required (generate an SFW image first)' }
+          } else {
+            // Verify the referenced content exists and is SFW
+            const { data: content } = await supabase
+              .from('content')
+              .select('id, image_url, nsfw')
+              .eq('id', args.content_id)
+              .eq('agent_id', agent.id)
+              .single()
+            if (!content) {
+              result = { error: 'content_id not found' }
+            } else if (content.nsfw) {
+              result = { error: 'Instagram rejects NSFW — generate an SFW image instead' }
+            } else {
+              const sendAt = new Date(Date.now() + (args.delay_seconds || 0) * 1000).toISOString()
+              const { data: post } = await supabase.from('scheduled_posts').insert({
+                agent_id: agent.id,
+                platform: 'instagram',
+                content_id: content.id,
+                caption: args.caption,
+                image_url: content.image_url,
+                nsfw: false,
+                status: 'pending',
+                send_at: sendAt,
+              }).select('id').single()
+              await supabase.from('agent_events').insert({
+                agent_id: agent.id,
+                event_type: 'post_scheduled',
+                description: `Instagram post scheduled: ${String(args.caption).slice(0, 60)}`,
+                metadata: { post_id: post?.id, platform: 'instagram', send_at: sendAt },
+              })
+              result = { scheduled: true, post_id: post?.id }
+            }
+          }
+        } else if (fnName === 'post_to_reddit') {
+          if (!agent.reddit_connected) {
+            result = { error: 'Reddit not connected for this agent' }
+          } else if (!args.subreddit || !args.title || !args.kind) {
+            result = { error: 'subreddit, title and kind are required' }
+          } else {
+            let imageUrl: string | null = null
+            if (args.kind === 'image') {
+              if (!args.content_id) {
+                result = { error: 'content_id required for image posts' }
+              } else {
+                const { data: content } = await supabase
+                  .from('content')
+                  .select('id, image_url, nsfw')
+                  .eq('id', args.content_id)
+                  .eq('agent_id', agent.id)
+                  .single()
+                if (!content) {
+                  result = { error: 'content_id not found' }
+                } else {
+                  imageUrl = content.image_url
+                  if (content.nsfw && !args.nsfw) {
+                    // force nsfw flag if the image itself is nsfw
+                    args.nsfw = true
+                  }
+                }
+              }
+            }
+            if (!result.error) {
+              const sendAt = new Date(Date.now() + (args.delay_seconds || 0) * 1000).toISOString()
+              const { data: post } = await supabase.from('scheduled_posts').insert({
+                agent_id: agent.id,
+                platform: 'reddit',
+                content_id: args.content_id || null,
+                subreddit: args.subreddit,
+                title: args.title,
+                body: args.body || null,
+                url: args.kind === 'link' ? args.url : (args.kind === 'image' ? imageUrl : null),
+                image_url: imageUrl,
+                post_kind: args.kind,
+                nsfw: !!args.nsfw,
+                status: 'pending',
+                send_at: sendAt,
+              }).select('id').single()
+              await supabase.from('agent_events').insert({
+                agent_id: agent.id,
+                event_type: 'post_scheduled',
+                description: `Reddit post scheduled to r/${args.subreddit}: ${String(args.title).slice(0, 60)}`,
+                metadata: { post_id: post?.id, platform: 'reddit', subreddit: args.subreddit, send_at: sendAt },
+              })
+              result = { scheduled: true, post_id: post?.id }
+            }
+          }
         } else {
           result = { error: `Unknown tool ${fnName}` }
         }

@@ -530,6 +530,101 @@ function DetailsTab({ agent, onSave, onDelete, saving, saved }) {
     update('fanvue_connected', false)
   }
 
+  // Instagram connection state
+  const [igUsername, setIgUsername] = useState(agent.instagram_username || '')
+  const [igStatus, setIgStatus] = useState(agent.instagram_connected ? 'connected' : 'idle')
+  const [igError, setIgError] = useState('')
+
+  // Reddit connection state
+  const [redditUsername, setRedditUsername] = useState(agent.reddit_username || '')
+  const [redditStatus, setRedditStatus] = useState(agent.reddit_connected ? 'connected' : 'idle')
+  const [redditError, setRedditError] = useState('')
+
+  // Handle OAuth return params for IG / Reddit
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    let touched = false
+    if (params.get('instagram_connected') === '1') {
+      setIgStatus('connected')
+      touched = true
+      supabase.from('agents').select('instagram_username').eq('id', agent.id).single().then(({ data }) => {
+        if (data?.instagram_username) setIgUsername(data.instagram_username)
+      })
+    } else if (params.get('instagram_error')) {
+      const code = params.get('instagram_error')
+      const detail = params.get('instagram_error_detail')
+      setIgError(detail ? `${code}: ${decodeURIComponent(detail)}` : decodeURIComponent(code))
+      setIgStatus('error')
+      touched = true
+    }
+    if (params.get('reddit_connected') === '1') {
+      setRedditStatus('connected')
+      touched = true
+      supabase.from('agents').select('reddit_username').eq('id', agent.id).single().then(({ data }) => {
+        if (data?.reddit_username) setRedditUsername(data.reddit_username)
+      })
+    } else if (params.get('reddit_error')) {
+      const code = params.get('reddit_error')
+      const detail = params.get('reddit_error_detail')
+      setRedditError(detail ? `${code}: ${decodeURIComponent(detail)}` : decodeURIComponent(code))
+      setRedditStatus('error')
+      touched = true
+    }
+    if (touched) window.history.replaceState({}, '', window.location.pathname)
+  }, [agent.id])
+
+  const startOAuth = async (provider) => {
+    const setStatus = provider === 'instagram' ? setIgStatus : setRedditStatus
+    const setError = provider === 'instagram' ? setIgError : setRedditError
+    setStatus('connecting')
+    setError('')
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) throw new Error('Not authenticated')
+      const base = import.meta.env.VITE_SUPABASE_URL || 'https://wzllrjbumbxvvozcwlzj.supabase.co'
+      const res = await fetch(`${base}/functions/v1/${provider}-oauth-start`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ agent_id: agent.id }),
+      })
+      if (!res.ok) throw new Error(`Failed to start OAuth: ${await res.text()}`)
+      const { url } = await res.json()
+      window.location.href = url
+    } catch (e) {
+      setError(e.message)
+      setStatus('error')
+    }
+  }
+
+  const disconnectInstagram = async () => {
+    await supabase.from('agents').update({
+      instagram_connected: false,
+      instagram_username: null,
+      instagram_user_id: null,
+      instagram_page_id: null,
+      instagram_access_token: null,
+      instagram_token_expires_at: null,
+    }).eq('id', agent.id)
+    setIgUsername('')
+    setIgStatus('idle')
+  }
+
+  const disconnectReddit = async () => {
+    await supabase.from('agents').update({
+      reddit_connected: false,
+      reddit_username: null,
+      reddit_access_token: null,
+      reddit_refresh_token: null,
+      reddit_token_expires_at: null,
+      reddit_scopes: null,
+    }).eq('id', agent.id)
+    setRedditUsername('')
+    setRedditStatus('idle')
+  }
+
   const update = (key, value) => setForm(prev => ({ ...prev, [key]: value }))
 
   const labelStyle = {
@@ -626,6 +721,37 @@ function DetailsTab({ agent, onSave, onDelete, saving, saved }) {
           </>
         )}
       </div>
+
+      {/* Instagram Connection */}
+      <SocialConnectSection
+        label="Instagram Account"
+        platformName="Instagram"
+        status={igStatus}
+        username={igUsername}
+        error={igError}
+        description="Connect this agent to an Instagram Business or Creator account (linked to a Facebook Page). Posts stay SFW — used for funnel content that drives traffic to Fanvue."
+        connectedBlurb="This agent can publish scheduled posts to Instagram via the Graph API. SFW content only."
+        onConnect={() => startOAuth('instagram')}
+        onDisconnect={disconnectInstagram}
+        sectionStyle={sectionStyle}
+        toggleStyle={toggleStyle}
+      />
+
+      {/* Reddit Connection */}
+      <SocialConnectSection
+        label="Reddit Account"
+        platformName="Reddit"
+        status={redditStatus}
+        username={redditUsername}
+        usernamePrefix="u/"
+        error={redditError}
+        description="Connect this agent to a Reddit account. Agents can post to allow-listed subreddits. NSFW permitted on NSFW-tagged subreddits only."
+        connectedBlurb="This agent can submit scheduled posts to subreddits, respecting each sub's rules and NSFW tagging."
+        onConnect={() => startOAuth('reddit')}
+        onDisconnect={disconnectReddit}
+        sectionStyle={sectionStyle}
+        toggleStyle={toggleStyle}
+      />
 
       {/* Image Generation */}
       <div style={sectionStyle}>
@@ -839,6 +965,71 @@ function DetailsTab({ agent, onSave, onDelete, saving, saved }) {
   )
 }
 
+function SocialConnectSection({
+  label,
+  platformName,
+  status,
+  username,
+  usernamePrefix = '@',
+  error,
+  description,
+  connectedBlurb,
+  onConnect,
+  onDisconnect,
+  sectionStyle,
+}) {
+  return (
+    <div style={sectionStyle}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)' }}>{label}</div>
+        {status === 'connected' && (
+          <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 20, background: 'rgba(74, 222, 128, 0.1)', color: 'rgba(74, 222, 128, 0.8)' }}>Connected</span>
+        )}
+      </div>
+
+      {status === 'connected' ? (
+        <>
+          {username && (
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+              Linked to {platformName} as <span style={{ fontWeight: 500 }}>{usernamePrefix}{username}</span>
+            </div>
+          )}
+          <div style={{
+            fontSize: 11, color: 'var(--text-tertiary)', padding: '10px 14px',
+            background: 'rgba(255,255,255,0.03)', borderRadius: 10, lineHeight: 1.5,
+          }}>{connectedBlurb}</div>
+          <button onClick={onDisconnect}
+            style={{ padding: '6px 14px', fontSize: 11, borderRadius: 8, background: 'rgba(255,255,255,0.06)', color: 'var(--text-tertiary)', transition: 'all 0.15s', alignSelf: 'flex-start' }}
+            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,80,80,0.12)'; e.currentTarget.style.color = 'rgba(255,120,120,0.9)' }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.color = 'var(--text-tertiary)' }}
+          >Disconnect</button>
+        </>
+      ) : (
+        <>
+          <div style={{ fontSize: 11, color: 'var(--text-tertiary)', lineHeight: 1.5 }}>{description}</div>
+          {error && (
+            <div style={{ fontSize: 12, color: 'rgba(255, 120, 120, 0.9)', padding: '8px 12px', background: 'rgba(255, 80, 80, 0.08)', borderRadius: 10 }}>
+              {error}
+            </div>
+          )}
+          <button onClick={onConnect}
+            disabled={status === 'connecting'}
+            style={{
+              padding: '10px 22px', fontSize: 13, borderRadius: 10,
+              background: 'rgba(255,255,255,0.08)', color: 'var(--text-primary)',
+              fontWeight: 500, transition: 'background 0.15s', alignSelf: 'flex-start',
+              opacity: status === 'connecting' ? 0.5 : 1,
+              cursor: status === 'connecting' ? 'wait' : 'pointer',
+            }}
+            onMouseEnter={e => { if (status !== 'connecting') e.currentTarget.style.background = 'rgba(255,255,255,0.12)' }}
+            onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.08)'}
+          >{status === 'connecting' ? 'Redirecting...' : `Connect with ${platformName}`}</button>
+        </>
+      )}
+    </div>
+  )
+}
+
 function Empty({ text }) {
   return (
     <div style={{
@@ -855,6 +1046,10 @@ const EVENT_COLORS = {
   image_generated: 'rgba(192, 132, 252, 0.8)',
   memories_extracted: 'rgba(250, 204, 21, 0.7)',
   stage_changed: 'rgba(74, 222, 128, 0.9)',
+  post_scheduled: 'rgba(255, 255, 255, 0.5)',
+  post_published: 'rgba(74, 222, 128, 0.8)',
+  instagram_connected: 'rgba(232, 121, 249, 0.9)',
+  reddit_connected: 'rgba(251, 146, 60, 0.9)',
   error: 'rgba(255, 120, 120, 0.9)',
 }
 
