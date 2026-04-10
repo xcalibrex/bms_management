@@ -1,12 +1,14 @@
+// Fanvue API client. Pass an OAuth access_token (NOT an API key).
+// Paths do not include /v1/ prefix. Auth is Bearer token.
 const API_BASE = 'https://api.fanvue.com'
 const API_VERSION = '2025-06-26'
 
-export function createFanvueClient(apiKey) {
+export function createFanvueClient(accessToken) {
   async function request(path, options = {}) {
     const res = await fetch(`${API_BASE}${path}`, {
       ...options,
       headers: {
-        'X-Fanvue-API-Key': apiKey,
+        Authorization: `Bearer ${accessToken}`,
         'X-Fanvue-API-Version': API_VERSION,
         'Content-Type': 'application/json',
         ...options.headers,
@@ -20,83 +22,76 @@ export function createFanvueClient(apiKey) {
   }
 
   return {
-    // Profile
     async getProfile() {
-      return request('/v1/users/me')
+      return request('/users/me')
     },
 
-    // Subscribers / Fans
     async getSubscribers(params = {}) {
       const qs = new URLSearchParams(params).toString()
-      return request(`/v1/subscribers${qs ? `?${qs}` : ''}`)
+      return request(`/subscribers${qs ? `?${qs}` : ''}`)
     },
 
     async getFollowers(params = {}) {
       const qs = new URLSearchParams(params).toString()
-      return request(`/v1/followers${qs ? `?${qs}` : ''}`)
+      return request(`/followers${qs ? `?${qs}` : ''}`)
     },
 
     async getTopSpenders(params = {}) {
       const qs = new URLSearchParams(params).toString()
-      return request(`/v1/subscribers/top-spenders${qs ? `?${qs}` : ''}`)
+      return request(`/subscribers/top-spenders${qs ? `?${qs}` : ''}`)
     },
 
-    // Messages
     async getChats(params = {}) {
       const qs = new URLSearchParams(params).toString()
-      return request(`/v1/chats${qs ? `?${qs}` : ''}`)
+      return request(`/chats${qs ? `?${qs}` : ''}`)
     },
 
     async getChatMessages(chatId, params = {}) {
       const qs = new URLSearchParams(params).toString()
-      return request(`/v1/chats/${chatId}/messages${qs ? `?${qs}` : ''}`)
+      return request(`/chats/${chatId}/messages${qs ? `?${qs}` : ''}`)
     },
 
     async sendMessage(chatId, body) {
-      return request(`/v1/chats/${chatId}/messages`, {
+      return request(`/chats/${chatId}/messages`, {
         method: 'POST',
         body: JSON.stringify(body),
       })
     },
 
     async sendMassMessage(body) {
-      return request('/v1/chats/mass-message', {
+      return request('/chats/mass-message', {
         method: 'POST',
         body: JSON.stringify(body),
       })
     },
 
-    // Earnings
     async getEarnings(params = {}) {
       const qs = new URLSearchParams(params).toString()
-      return request(`/v1/insights/earnings${qs ? `?${qs}` : ''}`)
+      return request(`/insights/earnings${qs ? `?${qs}` : ''}`)
     },
 
-    // Content
     async getPosts(params = {}) {
       const qs = new URLSearchParams(params).toString()
-      return request(`/v1/posts${qs ? `?${qs}` : ''}`)
+      return request(`/posts${qs ? `?${qs}` : ''}`)
     },
 
     async createPost(body) {
-      return request('/v1/posts', {
+      return request('/posts', {
         method: 'POST',
         body: JSON.stringify(body),
       })
     },
 
-    // Media upload
     async uploadMedia(body) {
-      return request('/v1/media/upload', {
+      return request('/media/upload', {
         method: 'POST',
         body: JSON.stringify(body),
       })
     },
 
-    // Validate key works
     async validate() {
       try {
-        await request('/v1/users/me')
+        await request('/users/me')
         return { valid: true }
       } catch (e) {
         return { valid: false, error: e.message }

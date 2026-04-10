@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
-import { models, imageStyles, getGradient, Pill } from '../lib/agentHelpers'
+import { models, imageStyles, getGradient, Pill, AgentAvatar } from '../lib/agentHelpers'
 
 function AgentModal({ onClose, onSave }) {
   const [tab, setTab] = useState('profile')
@@ -240,13 +240,9 @@ export default function Agents() {
               onMouseLeave={e => e.currentTarget.style.background = 'var(--surface)'}
               >
                 <div style={{ height: 56, background: getGradient(agent.name), position: 'relative' }}>
-                  <div style={{
-                    position: 'absolute', bottom: -16, left: 18, width: 36, height: 36,
-                    borderRadius: 12, background: 'var(--surface-active)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: 14, fontWeight: 600, color: 'var(--text-secondary)',
-                    boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
-                  }}>{agent.name?.[0]}</div>
+                  <div style={{ position: 'absolute', bottom: -16, left: 18 }}>
+                    <AgentAvatar agent={agent} size={36} radius={12} fontSize={14} />
+                  </div>
                 </div>
 
                 <div style={{ padding: '24px 18px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>

@@ -16,6 +16,31 @@ export function getGradient(name) {
   return avatarGradients[idx]
 }
 
+export function AgentAvatar({ agent, size = 36, radius = 12, fontSize = 14, shadow = true }) {
+  const style = {
+    width: size,
+    height: size,
+    borderRadius: radius,
+    background: agent?.fanvue_avatar_url
+      ? `url(${agent.fanvue_avatar_url}) center/cover`
+      : 'var(--surface-active)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize,
+    fontWeight: 600,
+    color: 'var(--text-secondary)',
+    flexShrink: 0,
+    overflow: 'hidden',
+    boxShadow: shadow ? '0 2px 8px rgba(0,0,0,0.3)' : 'none',
+  }
+  return (
+    <div style={style}>
+      {!agent?.fanvue_avatar_url && (agent?.name?.[0] || '?').toUpperCase()}
+    </div>
+  )
+}
+
 export function Pill({ label, active }) {
   return (
     <span style={{

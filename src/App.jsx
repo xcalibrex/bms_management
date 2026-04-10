@@ -35,6 +35,7 @@ function AppShell() {
   return (
     <div className="app">
       <nav className="sidebar">
+        <div className="brand">BlackMoonStudio.</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           {navItems.map(({ label, path }) => (
             <NavLink

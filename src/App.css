@@ -5,7 +5,7 @@
 }
 
 .sidebar {
-  width: 180px;
+  width: 200px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -14,6 +14,46 @@
   padding: 24px;
   gap: 2px;
   position: relative;
+}
+
+.brand {
+  position: absolute;
+  top: 28px;
+  left: 24px;
+  right: 24px;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  user-select: none;
+  cursor: default;
+  white-space: nowrap;
+
+  background: linear-gradient(
+    100deg,
+    rgba(255, 255, 255, 0.72) 0%,
+    rgba(255, 255, 255, 0.72) 35%,
+    rgba(30, 30, 40, 0.95) 50%,
+    rgba(255, 255, 255, 0.72) 65%,
+    rgba(255, 255, 255, 0.72) 100%
+  );
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: brand-shine 6s ease-in-out infinite;
+}
+
+@keyframes brand-shine {
+  0% {
+    background-position: 150% 0;
+  }
+  50% {
+    background-position: -50% 0;
+  }
+  100% {
+    background-position: 150% 0;
+  }
 }
 
 .nav-item {

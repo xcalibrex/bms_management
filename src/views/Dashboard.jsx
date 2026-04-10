@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { timeAgo } from '../lib/agentHelpers'
+import { timeAgo, AgentAvatar } from '../lib/agentHelpers'
 
 function getMonthStart() {
   const d = new Date()
@@ -133,14 +133,12 @@ export default function Dashboard() {
                     <div style={{
                       width: 20, fontSize: 10, color: 'var(--text-tertiary)', textAlign: 'center',
                     }}>{i + 1}</div>
-                    <div style={{
-                      width: 30, height: 30, borderRadius: 10, background: 'var(--surface-active)',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)',
-                    }}>{agent.name?.[0]}</div>
+                    <AgentAvatar agent={agent} size={30} radius={10} fontSize={12} shadow={false} />
                     <div>
                       <div style={{ fontSize: 13, fontWeight: 500 }}>{agent.name}</div>
-                      <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{agent.model}</div>
+                      {agent.fanvue_username && (
+                        <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>@{agent.fanvue_username}</div>
+                      )}
                     </div>
                   </div>
                   <div style={{ fontSize: 13, fontWeight: 600 }}>${revenue.toFixed(2)}</div>

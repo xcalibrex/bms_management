@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { createFanvueClient } from '../lib/fanvue'
-import { models, imageStyles, getGradient, Pill, StagePill, timeAgo } from '../lib/agentHelpers'
+import { models, imageStyles, getGradient, Pill, StagePill, timeAgo, AgentAvatar } from '../lib/agentHelpers'
 
 const tabList = ['Stats', 'Activity', 'Fans', 'Messages', 'Content', 'Details']
 
@@ -186,19 +186,23 @@ export default function AgentProfile() {
 
       {/* Header */}
       <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
-        <div style={{ height: 80, background: getGradient(agent.name), position: 'relative' }}>
-          <div style={{
-            position: 'absolute', bottom: -24, left: 24, width: 56, height: 56,
-            borderRadius: 16, background: 'var(--surface-active)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 20, fontWeight: 600, color: 'var(--text-secondary)',
-            boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
-          }}>{agent.name?.[0]}</div>
+        <div style={{
+          height: 80,
+          background: agent.fanvue_banner_url
+            ? `url(${agent.fanvue_banner_url}) center/cover`
+            : getGradient(agent.name),
+          position: 'relative',
+        }}>
+          <div style={{ position: 'absolute', bottom: -24, left: 24 }}>
+            <AgentAvatar agent={agent} size={56} radius={16} fontSize={20} />
+          </div>
         </div>
         <div style={{ padding: '32px 24px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
             <div style={{ fontSize: 18, fontWeight: 500 }}>{agent.name}</div>
-            <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 2 }}>{agent.model}</div>
+            {agent.fanvue_username && (
+              <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 2 }}>@{agent.fanvue_username}</div>
+            )}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <div style={{ display: 'flex', gap: 5 }}>
@@ -434,38 +438,80 @@ function DetailsTab({ agent, onSave, onDelete, saving, saved }) {
     setTimeout(() => setWebhookCopied(false), 2000)
   }
 
-  // Fanvue connect state
-  const [fanvueKey, setFanvueKey] = useState(agent.fanvue_api_key || '')
+  // Signing secret
+  const [signingSecret, setSigningSecret] = useState(agent.fanvue_signing_secret || '')
+  const [signingSecretSaved, setSigningSecretSaved] = useState(false)
+
+  const saveSigningSecret = async () => {
+    await supabase.from('agents').update({
+      fanvue_signing_secret: signingSecret.trim() || null,
+    }).eq('id', agent.id)
+    setSigningSecretSaved(true)
+    setTimeout(() => setSigningSecretSaved(false), 2000)
+  }
+
+  // Fanvue connection state (OAuth-based)
   const [fanvueUsername, setFanvueUsername] = useState(agent.fanvue_username || '')
   const [fanvueStatus, setFanvueStatus] = useState(agent.fanvue_connected ? 'connected' : 'idle')
   const [fanvueError, setFanvueError] = useState('')
 
+  // Handle OAuth return URL params
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('fanvue_connected') === '1') {
+      setFanvueStatus('connected')
+      window.history.replaceState({}, '', window.location.pathname)
+      // Sync profile to pull username
+      syncFanvueProfile()
+    } else if (params.get('fanvue_error')) {
+      const code = params.get('fanvue_error')
+      const detail = params.get('fanvue_error_detail')
+      setFanvueError(detail ? `${code}: ${decodeURIComponent(detail)}` : decodeURIComponent(code))
+      setFanvueStatus('error')
+      window.history.replaceState({}, '', window.location.pathname)
+    }
+  }, [])
+
+  const syncFanvueProfile = async () => {
+    try {
+      const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL || 'https://wzllrjbumbxvvozcwlzj.supabase.co'}/functions/v1/fanvue-sync-profile`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent_id: agent.id }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        if (data.username) setFanvueUsername(data.username)
+      }
+    } catch {}
+  }
+
   const handleFanvueConnect = async () => {
-    if (!fanvueKey.trim()) return
     setFanvueStatus('connecting')
     setFanvueError('')
 
-    const client = createFanvueClient(fanvueKey.trim())
-    const result = await client.validate()
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) throw new Error('Not authenticated')
 
-    if (result.valid) {
-      let username = ''
-      try {
-        const profileData = await client.getProfile()
-        username = profileData?.data?.username || profileData?.username || ''
-      } catch {}
+      const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL || 'https://wzllrjbumbxvvozcwlzj.supabase.co'}/functions/v1/fanvue-oauth-start`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ agent_id: agent.id }),
+      })
 
-      await supabase.from('agents').update({
-        fanvue_api_key: fanvueKey.trim(),
-        fanvue_connected: true,
-        fanvue_username: username,
-      }).eq('id', agent.id)
+      if (!res.ok) {
+        const err = await res.text()
+        throw new Error(`Failed to start OAuth: ${err}`)
+      }
 
-      setFanvueUsername(username)
-      setFanvueStatus('connected')
-      update('fanvue_connected', true)
-    } else {
-      setFanvueError(result.error || 'Invalid API key')
+      const { url } = await res.json()
+      window.location.href = url // Redirect to Fanvue authorization page
+    } catch (e) {
+      setFanvueError(e.message)
       setFanvueStatus('error')
     }
   }
@@ -473,10 +519,12 @@ function DetailsTab({ agent, onSave, onDelete, saving, saved }) {
   const handleFanvueDisconnect = async () => {
     await supabase.from('agents').update({
       fanvue_api_key: null,
+      fanvue_refresh_token: null,
+      fanvue_token_expires_at: null,
       fanvue_connected: false,
       fanvue_username: null,
+      fanvue_scopes: null,
     }).eq('id', agent.id)
-    setFanvueKey('')
     setFanvueUsername('')
     setFanvueStatus('idle')
     update('fanvue_connected', false)
@@ -516,22 +564,12 @@ function DetailsTab({ agent, onSave, onDelete, saving, saved }) {
           <input style={inputStyle} value={form.name} onChange={e => update('name', e.target.value)} />
         </div>
         <div>
-          <label style={labelStyle}>Model</label>
-          <select style={{ ...inputStyle, cursor: 'pointer', appearance: 'none' }} value={form.model} onChange={e => update('model', e.target.value)}>
-            {models.map(m => <option key={m} value={m}>{m}</option>)}
-          </select>
-        </div>
-        <div>
           <label style={labelStyle}>Personality</label>
           <textarea style={{ ...inputStyle, resize: 'vertical', minHeight: 60 }} value={form.personality} onChange={e => update('personality', e.target.value)} />
         </div>
         <div>
           <label style={labelStyle}>System Prompt</label>
           <textarea style={{ ...inputStyle, resize: 'vertical', minHeight: 80 }} value={form.system_prompt} onChange={e => update('system_prompt', e.target.value)} />
-        </div>
-        <div>
-          <label style={labelStyle}>Temperature — {form.temperature}</label>
-          <input type="range" min="0" max="1" step="0.1" value={form.temperature} onChange={e => update('temperature', parseFloat(e.target.value))} style={{ width: '100%', accentColor: 'rgba(255,255,255,0.4)', cursor: 'pointer' }} />
         </div>
       </div>
 
@@ -566,11 +604,7 @@ function DetailsTab({ agent, onSave, onDelete, saving, saved }) {
         ) : (
           <>
             <div style={{ fontSize: 11, color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
-              Each agent links to its own Fanvue creator account. Generate an API key in your agent's Fanvue creator settings.
-            </div>
-            <div>
-              <label style={labelStyle}>Fanvue API Key</label>
-              <input style={inputStyle} value={fanvueKey} onChange={e => setFanvueKey(e.target.value)} type="password" placeholder="Paste this agent's Fanvue API key" />
+              Each agent links to its own Fanvue creator account via secure OAuth. You'll be redirected to Fanvue to authorize BMS, then sent back here.
             </div>
             {fanvueError && (
               <div style={{ fontSize: 12, color: 'rgba(255, 120, 120, 0.9)', padding: '8px 12px', background: 'rgba(255, 80, 80, 0.08)', borderRadius: 10 }}>
@@ -578,17 +612,17 @@ function DetailsTab({ agent, onSave, onDelete, saving, saved }) {
               </div>
             )}
             <button onClick={handleFanvueConnect}
-              disabled={fanvueStatus === 'connecting' || !fanvueKey.trim()}
+              disabled={fanvueStatus === 'connecting'}
               style={{
-                padding: '8px 18px', fontSize: 12, borderRadius: 10,
+                padding: '10px 22px', fontSize: 13, borderRadius: 10,
                 background: 'rgba(255,255,255,0.08)', color: 'var(--text-primary)',
                 fontWeight: 500, transition: 'background 0.15s', alignSelf: 'flex-start',
-                opacity: !fanvueKey.trim() ? 0.4 : 1,
-                cursor: !fanvueKey.trim() ? 'not-allowed' : 'pointer',
+                opacity: fanvueStatus === 'connecting' ? 0.5 : 1,
+                cursor: fanvueStatus === 'connecting' ? 'wait' : 'pointer',
               }}
-              onMouseEnter={e => { if (fanvueKey.trim()) e.currentTarget.style.background = 'rgba(255,255,255,0.12)' }}
+              onMouseEnter={e => { if (fanvueStatus !== 'connecting') e.currentTarget.style.background = 'rgba(255,255,255,0.12)' }}
               onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.08)'}
-            >{fanvueStatus === 'connecting' ? 'Connecting...' : 'Connect to Fanvue'}</button>
+            >{fanvueStatus === 'connecting' ? 'Redirecting...' : 'Connect with Fanvue'}</button>
           </>
         )}
       </div>
@@ -617,27 +651,55 @@ function DetailsTab({ agent, onSave, onDelete, saving, saved }) {
         </div>
       </div>
 
-      {/* Webhook URL */}
+      {/* Webhook URL + Signing Secret */}
       <div style={sectionStyle}>
-        <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)' }}>Webhook URL</div>
+        <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)' }}>Webhook</div>
         <div style={{ fontSize: 11, color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
-          Paste this URL into your agent's Fanvue webhook settings. Fanvue will send fan messages, tips, and purchases here, and the agent will respond automatically.
+          In your agent's Fanvue Developer Area → Webhooks, register the URL below. Then copy the signing secret Fanvue shows you and paste it here so we can verify incoming events.
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <input
-            readOnly
-            value={webhookUrl}
-            style={{ ...inputStyle, fontFamily: 'monospace', fontSize: 11 }}
-            onClick={e => e.target.select()}
-          />
-          <button onClick={copyWebhook}
-            style={{
-              padding: '8px 18px', fontSize: 12, borderRadius: 10,
-              background: webhookCopied ? 'rgba(74, 222, 128, 0.15)' : 'rgba(255,255,255,0.08)',
-              color: webhookCopied ? 'rgba(74, 222, 128, 0.9)' : 'var(--text-primary)',
-              fontWeight: 500, transition: 'all 0.15s', whiteSpace: 'nowrap',
-            }}
-          >{webhookCopied ? 'Copied' : 'Copy'}</button>
+
+        <div>
+          <label style={labelStyle}>Webhook URL</label>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              readOnly
+              value={webhookUrl}
+              style={{ ...inputStyle, fontFamily: 'monospace', fontSize: 11 }}
+              onClick={e => e.target.select()}
+            />
+            <button onClick={copyWebhook}
+              style={{
+                padding: '8px 18px', fontSize: 12, borderRadius: 10,
+                background: webhookCopied ? 'rgba(74, 222, 128, 0.15)' : 'rgba(255,255,255,0.08)',
+                color: webhookCopied ? 'rgba(74, 222, 128, 0.9)' : 'var(--text-primary)',
+                fontWeight: 500, transition: 'all 0.15s', whiteSpace: 'nowrap',
+              }}
+            >{webhookCopied ? 'Copied' : 'Copy'}</button>
+          </div>
+        </div>
+
+        <div>
+          <label style={labelStyle}>Signing Secret</label>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              type="password"
+              value={signingSecret}
+              onChange={e => setSigningSecret(e.target.value)}
+              placeholder="Paste Fanvue's webhook signing secret"
+              style={inputStyle}
+            />
+            <button onClick={saveSigningSecret}
+              style={{
+                padding: '8px 18px', fontSize: 12, borderRadius: 10,
+                background: signingSecretSaved ? 'rgba(74, 222, 128, 0.15)' : 'rgba(255,255,255,0.08)',
+                color: signingSecretSaved ? 'rgba(74, 222, 128, 0.9)' : 'var(--text-primary)',
+                fontWeight: 500, transition: 'all 0.15s', whiteSpace: 'nowrap',
+              }}
+            >{signingSecretSaved ? 'Saved' : 'Save'}</button>
+          </div>
+          <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginTop: 6 }}>
+            Required for security — without this, incoming webhooks can't be verified.
+          </div>
         </div>
       </div>
 
