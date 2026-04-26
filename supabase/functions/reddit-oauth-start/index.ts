@@ -30,30 +30,44 @@ function safeReturnUrl(raw: string | undefined): string {
   return allowedOrigins[0]
 }
 
+function corsHeaders(origin: string | null): Record<string, string> {
+  const allowOrigin = origin && allowedOrigins.includes(origin) ? origin : allowedOrigins[0]
+  return {
+    'Access-Control-Allow-Origin': allowOrigin,
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'authorization, content-type',
+    'Access-Control-Max-Age': '86400',
+    'Vary': 'Origin',
+  }
+}
+
 Deno.serve(async (req) => {
-  if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 })
+  const origin = req.headers.get('Origin')
+  const cors = corsHeaders(origin)
+  if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors })
+  if (req.method !== 'POST') return new Response('Method not allowed', { status: 405, headers: cors })
 
   const token = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '')
-  if (!token) return new Response('Missing auth', { status: 401 })
+  if (!token) return new Response('Missing auth', { status: 401, headers: cors })
 
   const supabase = createClient(supabaseUrl, serviceKey)
   const { data: userRes, error: userErr } = await supabase.auth.getUser(token)
-  if (userErr || !userRes?.user) return new Response('Unauthorized', { status: 401 })
+  if (userErr || !userRes?.user) return new Response('Unauthorized', { status: 401, headers: cors })
   const userId = userRes.user.id
 
   const body = await req.json().catch(() => ({}))
   const { agent_id, return_url } = body
-  if (!agent_id) return new Response('Missing agent_id', { status: 400 })
+  if (!agent_id) return new Response('Missing agent_id', { status: 400, headers: cors })
 
   const { data: agent } = await supabase
     .from('agents')
     .select('id, user_id')
     .eq('id', agent_id)
     .single()
-  if (!agent || agent.user_id !== userId) return new Response('Forbidden', { status: 403 })
+  if (!agent || agent.user_id !== userId) return new Response('Forbidden', { status: 403, headers: cors })
 
   if (!REDDIT_CLIENT_ID) {
-    return new Response('REDDIT_CLIENT_ID not configured', { status: 500 })
+    return new Response('REDDIT_CLIENT_ID not configured', { status: 500, headers: cors })
   }
 
   const state = crypto.randomUUID()
@@ -78,6 +92,6 @@ Deno.serve(async (req) => {
   const url = `https://www.reddit.com/api/v1/authorize?${params}`
   return new Response(JSON.stringify({ url }), {
     status: 200,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { ...cors, 'Content-Type': 'application/json' },
   })
 })

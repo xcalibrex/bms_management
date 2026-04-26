@@ -56,7 +56,7 @@ function AgentModal({ onClose, onSave }) {
         width: 480, maxHeight: '82vh', overflowY: 'auto',
         display: 'flex', flexDirection: 'column', gap: 20,
       }} onClick={e => e.stopPropagation()}>
-        <div style={{ fontSize: 16, fontWeight: 500 }}>New Agent</div>
+        <div style={{ fontSize: 16, fontWeight: 500 }}>New Model</div>
 
         <div style={{ display: 'flex', gap: 4 }}>
           {['profile', 'integrations', 'image gen'].map(t => (
@@ -70,7 +70,7 @@ function AgentModal({ onClose, onSave }) {
           <>
             <div>
               <label style={labelStyle}>Name</label>
-              <input style={inputStyle} value={form.name} onChange={e => update('name', e.target.value)} placeholder="Agent name" />
+              <input style={inputStyle} value={form.name} onChange={e => update('name', e.target.value)} placeholder="Model name" />
             </div>
             <div>
               <label style={labelStyle}>Model</label>
@@ -80,11 +80,11 @@ function AgentModal({ onClose, onSave }) {
             </div>
             <div>
               <label style={labelStyle}>Personality</label>
-              <textarea style={{ ...inputStyle, resize: 'vertical', minHeight: 60 }} value={form.personality} onChange={e => update('personality', e.target.value)} placeholder="Describe the agent's personality..." />
+              <textarea style={{ ...inputStyle, resize: 'vertical', minHeight: 60 }} value={form.personality} onChange={e => update('personality', e.target.value)} placeholder="Describe the model's personality..." />
             </div>
             <div>
               <label style={labelStyle}>System Prompt</label>
-              <textarea style={{ ...inputStyle, resize: 'vertical', minHeight: 80 }} value={form.system_prompt} onChange={e => update('system_prompt', e.target.value)} placeholder="System instructions for the agent..." />
+              <textarea style={{ ...inputStyle, resize: 'vertical', minHeight: 80 }} value={form.system_prompt} onChange={e => update('system_prompt', e.target.value)} placeholder="System instructions for the model..." />
             </div>
             <div>
               <label style={labelStyle}>Temperature — {form.temperature}</label>
@@ -102,7 +102,7 @@ function AgentModal({ onClose, onSave }) {
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <div>
                   <div style={{ fontSize: 13, fontWeight: 500 }}>Fanvue</div>
-                  <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2 }}>Connect agent to Fanvue platform</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2 }}>Connect model to Fanvue platform</div>
                 </div>
                 <div style={toggleStyle(form.fanvue_connected)} onClick={() => update('fanvue_connected', !form.fanvue_connected)}>
                   <div style={toggleDot(form.fanvue_connected)} />
@@ -205,26 +205,26 @@ export default function Agents() {
   }
 
   if (loading) {
-    return <div style={{ color: 'var(--text-tertiary)', fontSize: 13, padding: 48 }}>Loading agents...</div>
+    return <div style={{ color: 'var(--text-tertiary)', fontSize: 13, padding: 48 }}>Loading models...</div>
   }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div>
-          <h1 style={{ fontSize: 20, fontWeight: 500, marginBottom: 4 }}>Agents</h1>
+          <h1 style={{ fontSize: 20, fontWeight: 500, marginBottom: 4 }}>Models</h1>
           <p style={{ fontSize: 13, color: 'var(--text-tertiary)' }}>Create and manage your AI characters</p>
         </div>
         <button onClick={() => setShowNew(true)}
           style={{ padding: '8px 20px', fontSize: 13, borderRadius: 10, background: 'rgba(255,255,255,0.08)', color: 'var(--text-primary)', fontWeight: 500, transition: 'background 0.15s' }}
           onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.13)'}
           onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.08)'}
-        >New Agent</button>
+        >New Model</button>
       </div>
 
       {agents.length === 0 ? (
         <div style={{ color: 'var(--text-tertiary)', fontSize: 13, padding: '48px 0', textAlign: 'center' }}>
-          No agents yet. Create your first one.
+          No models yet. Create your first one.
         </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>

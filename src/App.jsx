@@ -9,7 +9,7 @@ import Settings from './views/Settings'
 
 const navItems = [
   { label: 'Dashboard', path: '/' },
-  { label: 'Agents', path: '/agents' },
+  { label: 'Models', path: '/agents' },
   { label: 'Settings', path: '/settings' },
 ]
 

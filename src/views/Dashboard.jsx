@@ -83,17 +83,17 @@ export default function Dashboard() {
   }
 
   const statCards = [
-    { label: 'Total Agents', value: stats.totalAgents.toString(), sub: `${stats.activeAgents} active` },
-    { label: 'Total Fans', value: stats.totalFans.toLocaleString(), sub: 'across all agents' },
+    { label: 'Total Models', value: stats.totalAgents.toString(), sub: `${stats.activeAgents} active` },
+    { label: 'Total Fans', value: stats.totalFans.toLocaleString(), sub: 'across all models' },
     { label: 'Revenue (Month)', value: `$${stats.revenueThisMonth.toFixed(2)}`, sub: new Date().toLocaleString('default', { month: 'long' }) },
-    { label: 'Active Agents', value: stats.activeAgents.toString(), sub: `of ${stats.totalAgents} total` },
+    { label: 'Active Models', value: stats.activeAgents.toString(), sub: `of ${stats.totalAgents} total` },
   ]
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
       <div>
         <h1 style={{ fontSize: 20, fontWeight: 500, marginBottom: 4 }}>Dashboard</h1>
-        <p style={{ fontSize: 13, color: 'var(--text-tertiary)' }}>Overview of your AI agents</p>
+        <p style={{ fontSize: 13, color: 'var(--text-tertiary)' }}>Overview of your AI models</p>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14 }}>
@@ -111,9 +111,9 @@ export default function Dashboard() {
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-        {/* Top Agents */}
+        {/* Top Models */}
         <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius)', padding: 20 }}>
-          <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 14, color: 'var(--text-secondary)' }}>Top Agents This Month</div>
+          <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 14, color: 'var(--text-secondary)' }}>Top Models This Month</div>
           {topAgents.length === 0 ? (
             <div style={{ color: 'var(--text-tertiary)', fontSize: 12, padding: '24px 0', textAlign: 'center' }}>
               No revenue yet this month

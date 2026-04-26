@@ -3,8 +3,34 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { createFanvueClient } from '../lib/fanvue'
 import { models, imageStyles, getGradient, Pill, StagePill, timeAgo, AgentAvatar } from '../lib/agentHelpers'
+import { useAuth } from '../contexts/AuthContext'
+import { createFalClient } from '../lib/falai'
 
 const tabList = ['Stats', 'Activity', 'Fans', 'Messages', 'Content', 'Details']
+
+/* ── Shared styles ─────────────────────────────────────────────── */
+const labelStyle = {
+  fontSize: 11, color: 'var(--text-tertiary)', textTransform: 'uppercase',
+  letterSpacing: '0.5px', marginBottom: 6, display: 'block',
+}
+const inputStyle = {
+  width: '100%', background: 'var(--surface-hover)', borderRadius: 10,
+  padding: '10px 14px', fontSize: 13, color: 'var(--text-primary)',
+}
+const sectionStyle = {
+  background: 'var(--surface)', borderRadius: 'var(--radius)', padding: 22,
+  display: 'flex', flexDirection: 'column', gap: 16,
+}
+const toggleStyle = (active) => ({
+  width: 36, height: 20, borderRadius: 10,
+  background: active ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.08)',
+  position: 'relative', cursor: 'pointer', transition: 'background 0.2s', flexShrink: 0,
+})
+const toggleDot = (active) => ({
+  width: 14, height: 14, borderRadius: '50%',
+  background: active ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.3)',
+  position: 'absolute', top: 3, left: active ? 19 : 3, transition: 'all 0.2s',
+})
 
 const dateRanges = [
   { label: '7D', days: 7 },
@@ -32,6 +58,7 @@ export default function AgentProfile() {
   const [tabLoading, setTabLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [contentSubTab, setContentSubTab] = useState('Library')
 
   useEffect(() => {
     async function fetch() {
@@ -172,7 +199,7 @@ export default function AgentProfile() {
           onClick={() => navigate('/agents')}
           onMouseEnter={e => e.currentTarget.style.color = 'var(--text-secondary)'}
           onMouseLeave={e => e.currentTarget.style.color = 'var(--text-tertiary)'}
-        >Agents</div>
+        >Models</div>
 
         {/* Date filter */}
         <div style={{ display: 'flex', gap: 2, background: 'var(--surface)', borderRadius: 20, padding: 3 }}>
@@ -238,7 +265,14 @@ export default function AgentProfile() {
           {tab === 'Activity' && <ActivityTab data={tabData} />}
           {tab === 'Fans' && <FansTab data={tabData} />}
           {tab === 'Messages' && <MessagesTab data={tabData} agentName={agent.name} />}
-          {tab === 'Content' && <ContentTab data={tabData} />}
+          {tab === 'Content' && (
+            <ContentSection
+              agent={agent}
+              libraryData={tabData}
+              contentSubTab={contentSubTab}
+              setContentSubTab={setContentSubTab}
+            />
+          )}
           {tab === 'Details' && (
             <DetailsTab
               agent={agent}
@@ -329,7 +363,584 @@ function MessagesTab({ data, agentName }) {
   )
 }
 
-function ContentTab({ data }) {
+/* ── Content sub-navigation section ──────────────────────────────── */
+
+const CONTENT_SUB_TABS = ['Library', 'Calendar', 'Schedule', 'Create']
+
+const subNavItemStyle = (active) => ({
+  padding: '9px 14px', fontSize: 13, borderRadius: 10,
+  background: active ? 'rgba(255,255,255,0.08)' : 'transparent',
+  color: active ? 'var(--text-primary)' : 'var(--text-tertiary)',
+  fontWeight: active ? 500 : 400, cursor: 'pointer', transition: 'all .15s',
+})
+
+const PLATFORM_COLORS = { instagram: '#E1306C', reddit: '#FF4500' }
+const STATUS_COLORS = {
+  pending: 'rgba(255,255,255,0.35)', posted: 'rgba(120,220,120,0.7)',
+  failed: 'rgba(255,100,100,0.7)', cancelled: 'rgba(255,255,255,0.2)',
+}
+
+function ContentSection({ agent, libraryData, contentSubTab, setContentSubTab }) {
+  const { profile } = useAuth()
+  const [scheduledPosts, setScheduledPosts] = useState([])
+  const [postsLoading, setPostsLoading] = useState(false)
+
+  const fetchScheduledPosts = async () => {
+    setPostsLoading(true)
+    const { data } = await supabase
+      .from('scheduled_posts')
+      .select('*')
+      .eq('agent_id', agent.id)
+      .order('send_at', { ascending: true })
+    setScheduledPosts(data || [])
+    setPostsLoading(false)
+  }
+
+  useEffect(() => {
+    if (contentSubTab === 'Calendar' || contentSubTab === 'Schedule') fetchScheduledPosts()
+  }, [contentSubTab, agent.id])
+
+  return (
+    <div style={{ display: 'flex', gap: 20 }}>
+      <div style={{ width: 140, display: 'flex', flexDirection: 'column', gap: 2, flexShrink: 0 }}>
+        {CONTENT_SUB_TABS.map(s => (
+          <div key={s} style={subNavItemStyle(contentSubTab === s)} onClick={() => setContentSubTab(s)}>
+            {s}
+          </div>
+        ))}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        {contentSubTab === 'Library' && <LibraryGrid data={libraryData} />}
+        {contentSubTab === 'Calendar' && (
+          <CalendarView posts={scheduledPosts} loading={postsLoading} />
+        )}
+        {contentSubTab === 'Schedule' && (
+          <SchedulePostForm
+            agent={agent}
+            libraryData={libraryData}
+            onCreated={fetchScheduledPosts}
+          />
+        )}
+        {contentSubTab === 'Create' && (
+          <CreateContentForm
+            agent={agent}
+            falApiKey={profile?.falai_api_key}
+          />
+        )}
+      </div>
+    </div>
+  )
+}
+
+/* ── Calendar View ──────────────────────────────────────────────── */
+
+function getWeekDays(refDate) {
+  const d = new Date(refDate)
+  const day = d.getDay()
+  const diff = d.getDate() - day + (day === 0 ? -6 : 1) // Monday start
+  const monday = new Date(d.setDate(diff))
+  monday.setHours(0, 0, 0, 0)
+  return Array.from({ length: 7 }, (_, i) => {
+    const date = new Date(monday)
+    date.setDate(monday.getDate() + i)
+    return date
+  })
+}
+
+const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+
+function CalendarView({ posts, loading }) {
+  const [weekRef, setWeekRef] = useState(new Date())
+  const days = getWeekDays(weekRef)
+
+  const shiftWeek = (dir) => {
+    setWeekRef(prev => {
+      const d = new Date(prev)
+      d.setDate(d.getDate() + dir * 7)
+      return d
+    })
+  }
+
+  const fmt = (d) => `${d.getMonth() + 1}/${d.getDate()}`
+  const isSameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
+
+  const postsByDay = days.map(day =>
+    posts.filter(p => isSameDay(new Date(p.send_at), day))
+  )
+
+  if (loading) return <div style={{ color: 'var(--text-tertiary)', fontSize: 13 }}>Loading schedule...</div>
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {/* Week nav */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{ cursor: 'pointer', padding: '4px 10px', borderRadius: 8, background: 'var(--surface)', fontSize: 13, color: 'var(--text-secondary)' }} onClick={() => shiftWeek(-1)}>&larr;</div>
+        <span style={{ fontSize: 13, color: 'var(--text-primary)', fontWeight: 500 }}>
+          {fmt(days[0])} &ndash; {fmt(days[6])}
+        </span>
+        <div style={{ cursor: 'pointer', padding: '4px 10px', borderRadius: 8, background: 'var(--surface)', fontSize: 13, color: 'var(--text-secondary)' }} onClick={() => shiftWeek(1)}>&rarr;</div>
+        <div style={{ cursor: 'pointer', padding: '4px 10px', borderRadius: 8, background: 'var(--surface)', fontSize: 12, color: 'var(--text-tertiary)' }} onClick={() => setWeekRef(new Date())}>Today</div>
+      </div>
+
+      {/* Grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6 }}>
+        {days.map((day, i) => {
+          const isToday = isSameDay(day, new Date())
+          return (
+            <div key={i} style={{
+              background: 'var(--surface)', borderRadius: 'var(--radius)', padding: 10,
+              minHeight: 120, display: 'flex', flexDirection: 'column', gap: 6,
+              border: isToday ? '1px solid rgba(255,255,255,0.15)' : '1px solid transparent',
+            }}>
+              <div style={{ fontSize: 10, color: isToday ? 'var(--text-primary)' : 'var(--text-tertiary)', fontWeight: isToday ? 600 : 400, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                {DAY_NAMES[i]} {day.getDate()}
+              </div>
+              {postsByDay[i].length === 0 && (
+                <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.15)', marginTop: 'auto' }}>—</div>
+              )}
+              {postsByDay[i].map(post => (
+                <div key={post.id} style={{
+                  background: 'var(--surface-hover)', borderRadius: 8, padding: '6px 8px',
+                  display: 'flex', flexDirection: 'column', gap: 4,
+                }}>
+                  <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                    <span style={{
+                      fontSize: 9, padding: '1px 5px', borderRadius: 6, fontWeight: 600,
+                      background: PLATFORM_COLORS[post.platform] || 'rgba(255,255,255,0.1)',
+                      color: '#fff', textTransform: 'uppercase',
+                    }}>{post.platform === 'instagram' ? 'IG' : 'RD'}</span>
+                    <span style={{
+                      fontSize: 9, padding: '1px 5px', borderRadius: 6,
+                      background: STATUS_COLORS[post.status], color: '#fff',
+                    }}>{post.status}</span>
+                  </div>
+                  {post.image_url && (
+                    <div style={{
+                      height: 40, borderRadius: 4, background: `url(${post.image_url}) center/cover`,
+                    }} />
+                  )}
+                  <div style={{ fontSize: 10, color: 'var(--text-secondary)', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+                    {post.caption || post.title || post.subreddit || '—'}
+                  </div>
+                  <div style={{ fontSize: 9, color: 'var(--text-tertiary)' }}>
+                    {new Date(post.send_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+/* ── Create Post Form ───────────────────────────────────────────── */
+
+function SchedulePostForm({ agent, libraryData, onCreated }) {
+  const [form, setForm] = useState({
+    platform: agent.instagram_connected ? 'instagram' : agent.reddit_connected ? 'reddit' : 'instagram',
+    image_url: '', content_id: null,
+    caption: '', subreddit: '', title: '', body: '',
+    post_kind: 'image', nsfw: false,
+    schedule_later: false, send_at: '',
+  })
+  const [imageSource, setImageSource] = useState('library') // 'library' | 'url'
+  const [submitting, setSubmitting] = useState(false)
+  const [submitted, setSubmitted] = useState(false)
+
+  const up = (k, v) => setForm(p => ({ ...p, [k]: v }))
+  const platformConnected = (p) => p === 'instagram' ? agent.instagram_connected : agent.reddit_connected
+
+  const canSubmit = () => {
+    if (!platformConnected(form.platform)) return false
+    if (form.platform === 'instagram' && !form.image_url) return false
+    if (form.platform === 'reddit' && !form.subreddit) return false
+    if (form.platform === 'reddit' && !form.title) return false
+    return true
+  }
+
+  const handleSubmit = async () => {
+    if (!canSubmit()) return
+    setSubmitting(true)
+    const row = {
+      agent_id: agent.id,
+      platform: form.platform,
+      image_url: form.image_url || null,
+      content_id: form.content_id || null,
+      caption: form.platform === 'instagram' ? form.caption : null,
+      subreddit: form.platform === 'reddit' ? form.subreddit : null,
+      title: form.platform === 'reddit' ? form.title : null,
+      body: form.platform === 'reddit' ? form.body : null,
+      post_kind: form.platform === 'reddit' ? form.post_kind : null,
+      nsfw: form.nsfw,
+      send_at: form.schedule_later && form.send_at
+        ? new Date(form.send_at).toISOString()
+        : new Date().toISOString(),
+      status: 'pending',
+    }
+    const { error } = await supabase.from('scheduled_posts').insert(row)
+    setSubmitting(false)
+    if (!error) {
+      setSubmitted(true)
+      setTimeout(() => setSubmitted(false), 2500)
+      onCreated()
+      setForm(p => ({ ...p, image_url: '', content_id: null, caption: '', subreddit: '', title: '', body: '', schedule_later: false, send_at: '' }))
+    }
+  }
+
+  const platformBtn = (p, label) => ({
+    padding: '8px 18px', borderRadius: 10, fontSize: 13, cursor: 'pointer',
+    fontWeight: form.platform === p ? 500 : 400, transition: 'all .15s',
+    background: form.platform === p ? (PLATFORM_COLORS[p] + '33') : 'var(--surface)',
+    color: form.platform === p ? '#fff' : platformConnected(p) ? 'var(--text-secondary)' : 'var(--text-tertiary)',
+    border: form.platform === p ? `1px solid ${PLATFORM_COLORS[p]}55` : '1px solid transparent',
+    opacity: platformConnected(p) ? 1 : 0.4,
+  })
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 520 }}>
+      {submitted && (
+        <div style={{ padding: '10px 14px', borderRadius: 10, background: 'rgba(120,220,120,0.12)', color: 'rgba(120,220,120,0.9)', fontSize: 13 }}>
+          Post scheduled successfully
+        </div>
+      )}
+
+      {/* Platform */}
+      <div style={sectionStyle}>
+        <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)' }}>Platform</div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <div style={platformBtn('instagram', 'Instagram')} onClick={() => platformConnected('instagram') && up('platform', 'instagram')}>
+            Instagram {!agent.instagram_connected && <span style={{ fontSize: 10 }}>(not connected)</span>}
+          </div>
+          <div style={platformBtn('reddit', 'Reddit')} onClick={() => platformConnected('reddit') && up('platform', 'reddit')}>
+            Reddit {!agent.reddit_connected && <span style={{ fontSize: 10 }}>(not connected)</span>}
+          </div>
+        </div>
+      </div>
+
+      {/* Image / Content */}
+      <div style={sectionStyle}>
+        <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)' }}>Image</div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {['library', 'url'].map(s => (
+            <div key={s} style={{
+              padding: '6px 14px', borderRadius: 8, fontSize: 12, cursor: 'pointer',
+              background: imageSource === s ? 'rgba(255,255,255,0.1)' : 'transparent',
+              color: imageSource === s ? 'var(--text-primary)' : 'var(--text-tertiary)',
+            }} onClick={() => setImageSource(s)}>
+              {s === 'library' ? 'From Library' : 'Custom URL'}
+            </div>
+          ))}
+        </div>
+
+        {imageSource === 'url' && (
+          <input style={inputStyle} placeholder="https://..." value={form.image_url} onChange={e => { up('image_url', e.target.value); up('content_id', null) }} />
+        )}
+
+        {imageSource === 'library' && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(80px, 1fr))', gap: 6, maxHeight: 200, overflowY: 'auto' }}>
+            {(Array.isArray(libraryData) ? libraryData : []).filter(c => c.image_url).map(c => (
+              <div key={c.id} onClick={() => { up('image_url', c.image_url); up('content_id', c.id) }} style={{
+                height: 70, borderRadius: 8, cursor: 'pointer',
+                background: `url(${c.image_url}) center/cover`,
+                border: form.content_id === c.id ? '2px solid rgba(255,255,255,0.6)' : '2px solid transparent',
+                opacity: form.content_id === c.id ? 1 : 0.6,
+                transition: 'all .15s',
+              }} />
+            ))}
+            {(!Array.isArray(libraryData) || libraryData.filter(c => c.image_url).length === 0) && (
+              <div style={{ fontSize: 11, color: 'var(--text-tertiary)', padding: 8 }}>No images in library</div>
+            )}
+          </div>
+        )}
+
+        {form.image_url && (
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            <div style={{ width: 48, height: 48, borderRadius: 8, background: `url(${form.image_url}) center/cover`, flexShrink: 0 }} />
+            <span style={{ fontSize: 11, color: 'var(--text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Selected</span>
+          </div>
+        )}
+      </div>
+
+      {/* Post details */}
+      <div style={sectionStyle}>
+        <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)' }}>Details</div>
+
+        {form.platform === 'instagram' && (
+          <div>
+            <label style={labelStyle}>Caption</label>
+            <textarea style={{ ...inputStyle, resize: 'vertical', minHeight: 70 }} value={form.caption} onChange={e => up('caption', e.target.value)} placeholder="Write a caption..." />
+          </div>
+        )}
+
+        {form.platform === 'reddit' && (
+          <>
+            <div>
+              <label style={labelStyle}>Subreddit</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 13, color: 'var(--text-tertiary)' }}>r/</span>
+                <input style={inputStyle} value={form.subreddit} onChange={e => up('subreddit', e.target.value)} placeholder="subreddit" />
+              </div>
+            </div>
+            <div>
+              <label style={labelStyle}>Post Type</label>
+              <div style={{ display: 'flex', gap: 6 }}>
+                {['image', 'text', 'link'].map(k => (
+                  <div key={k} style={{
+                    padding: '5px 12px', borderRadius: 8, fontSize: 12, cursor: 'pointer',
+                    background: form.post_kind === k ? 'rgba(255,255,255,0.1)' : 'transparent',
+                    color: form.post_kind === k ? 'var(--text-primary)' : 'var(--text-tertiary)',
+                  }} onClick={() => up('post_kind', k)}>{k}</div>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label style={labelStyle}>Title</label>
+              <input style={inputStyle} value={form.title} onChange={e => up('title', e.target.value)} placeholder="Post title" />
+            </div>
+            {(form.post_kind === 'text' || form.post_kind === 'link') && (
+              <div>
+                <label style={labelStyle}>{form.post_kind === 'link' ? 'URL' : 'Body'}</label>
+                <textarea style={{ ...inputStyle, resize: 'vertical', minHeight: 60 }} value={form.body} onChange={e => up('body', e.target.value)} placeholder={form.post_kind === 'link' ? 'https://...' : 'Post body...'} />
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Scheduling & Options */}
+      <div style={sectionStyle}>
+        <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)' }}>Scheduling</div>
+
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: 13, color: 'var(--text-primary)' }}>NSFW</span>
+          <div style={toggleStyle(form.nsfw)} onClick={() => up('nsfw', !form.nsfw)}>
+            <div style={toggleDot(form.nsfw)} />
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: 13, color: 'var(--text-primary)' }}>Schedule for later</span>
+          <div style={toggleStyle(form.schedule_later)} onClick={() => up('schedule_later', !form.schedule_later)}>
+            <div style={toggleDot(form.schedule_later)} />
+          </div>
+        </div>
+
+        {form.schedule_later ? (
+          <input type="datetime-local" style={inputStyle} value={form.send_at} onChange={e => up('send_at', e.target.value)} />
+        ) : (
+          <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Will post immediately when dispatched</div>
+        )}
+      </div>
+
+      {/* Submit */}
+      <button
+        disabled={!canSubmit() || submitting}
+        onClick={handleSubmit}
+        style={{
+          padding: '12px 24px', borderRadius: 10, fontSize: 14, fontWeight: 500,
+          background: canSubmit() ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.04)',
+          color: canSubmit() ? 'var(--text-primary)' : 'var(--text-tertiary)',
+          cursor: canSubmit() ? 'pointer' : 'not-allowed',
+          transition: 'all .15s', border: 'none', alignSelf: 'flex-start',
+        }}
+      >
+        {submitting ? 'Scheduling...' : submitted ? 'Scheduled!' : form.schedule_later ? 'Schedule Post' : 'Post Now'}
+      </button>
+    </div>
+  )
+}
+
+/* ── Create Content (AI generation) ──────────────────────────────── */
+
+const FAL_MODELS = [
+  { id: 'fal-ai/flux-lora', label: 'Flux LoRA (Default)' },
+  { id: 'fal-ai/flux/schnell', label: 'Flux Schnell (Fast)' },
+  { id: 'fal-ai/flux-pro/v1.1', label: 'Flux Pro (Quality)' },
+]
+
+function CreateContentForm({ agent, falApiKey }) {
+  const [prompt, setPrompt] = useState('')
+  const [nsfw, setNsfw] = useState(false)
+  const [model, setModel] = useState(FAL_MODELS[0].id)
+  const [generating, setGenerating] = useState(false)
+  const [results, setResults] = useState([]) // array of image URLs
+  const [saved, setSaved] = useState({}) // { url: true } for saved items
+  const [error, setError] = useState(null)
+
+  const handleGenerate = async () => {
+    if (!prompt.trim() || !falApiKey) return
+    setGenerating(true)
+    setError(null)
+    setResults([])
+    setSaved({})
+    try {
+      const client = createFalClient(falApiKey)
+      const res = await client.generateImage({
+        prompt: prompt.trim(),
+        nsfw,
+        numImages: 4,
+        model,
+      })
+      setResults(res.images || [])
+    } catch (e) {
+      setError(e.message || 'Generation failed')
+    }
+    setGenerating(false)
+  }
+
+  const handleSave = async (imageUrl) => {
+    const { error: err } = await supabase.from('content').insert({
+      agent_id: agent.id,
+      content_type: 'free',
+      image_url: imageUrl,
+      prompt_used: prompt.trim(),
+      nsfw,
+    })
+    if (!err) setSaved(prev => ({ ...prev, [imageUrl]: true }))
+  }
+
+  if (!falApiKey) {
+    return (
+      <div style={sectionStyle}>
+        <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+          No fal.ai API key configured. Add one in <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>Settings</span> to generate content.
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 560 }}>
+      {/* Prompt */}
+      <div style={sectionStyle}>
+        <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)' }}>Describe your image</div>
+        <textarea
+          style={{ ...inputStyle, resize: 'vertical', minHeight: 80 }}
+          value={prompt}
+          onChange={e => setPrompt(e.target.value)}
+          placeholder="A professional photo of..."
+        />
+      </div>
+
+      {/* Options */}
+      <div style={sectionStyle}>
+        <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)' }}>Options</div>
+
+        {/* Model */}
+        <div>
+          <label style={labelStyle}>AI Model</label>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {FAL_MODELS.map(m => (
+              <div key={m.id} style={{
+                padding: '6px 12px', borderRadius: 8, fontSize: 12, cursor: 'pointer',
+                background: model === m.id ? 'rgba(255,255,255,0.1)' : 'transparent',
+                color: model === m.id ? 'var(--text-primary)' : 'var(--text-tertiary)',
+                transition: 'all .15s',
+              }} onClick={() => setModel(m.id)}>{m.label}</div>
+            ))}
+          </div>
+        </div>
+
+        {/* Media type */}
+        <div>
+          <label style={labelStyle}>Media Type</label>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <div style={{
+              padding: '6px 12px', borderRadius: 8, fontSize: 12,
+              background: 'rgba(255,255,255,0.1)', color: 'var(--text-primary)',
+            }}>Image</div>
+            <div style={{
+              padding: '6px 12px', borderRadius: 8, fontSize: 12,
+              background: 'transparent', color: 'var(--text-tertiary)', opacity: 0.4,
+              cursor: 'not-allowed',
+            }}>Video (coming soon)</div>
+          </div>
+        </div>
+
+        {/* NSFW */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: 13, color: 'var(--text-primary)' }}>NSFW</span>
+          <div style={toggleStyle(nsfw)} onClick={() => setNsfw(!nsfw)}>
+            <div style={toggleDot(nsfw)} />
+          </div>
+        </div>
+      </div>
+
+      {/* Generate button */}
+      <button
+        disabled={!prompt.trim() || generating}
+        onClick={handleGenerate}
+        style={{
+          padding: '12px 24px', borderRadius: 10, fontSize: 14, fontWeight: 500,
+          background: prompt.trim() ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.04)',
+          color: prompt.trim() ? 'var(--text-primary)' : 'var(--text-tertiary)',
+          cursor: prompt.trim() && !generating ? 'pointer' : 'not-allowed',
+          transition: 'all .15s', border: 'none', alignSelf: 'flex-start',
+        }}
+      >
+        {generating ? 'Generating...' : 'Create (4 images)'}
+      </button>
+
+      {/* Error */}
+      {error && (
+        <div style={{ padding: '10px 14px', borderRadius: 10, background: 'rgba(255,100,100,0.12)', color: 'rgba(255,100,100,0.9)', fontSize: 13 }}>
+          {error}
+        </div>
+      )}
+
+      {/* Results grid */}
+      {results.length > 0 && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          {results.map((url, i) => (
+            <div key={i} style={{
+              borderRadius: 'var(--radius)', overflow: 'hidden',
+              background: 'var(--surface)', position: 'relative',
+            }}>
+              <div style={{
+                width: '100%', aspectRatio: '1', background: `url(${url}) center/cover`,
+              }} />
+              <div style={{ padding: '8px 10px', display: 'flex', justifyContent: 'flex-end' }}>
+                {saved[url] ? (
+                  <span style={{ fontSize: 12, color: 'rgba(120,220,120,0.8)', fontWeight: 500 }}>Saved</span>
+                ) : (
+                  <div
+                    onClick={() => handleSave(url)}
+                    style={{
+                      padding: '4px 12px', borderRadius: 8, fontSize: 12,
+                      background: 'rgba(255,255,255,0.08)', color: 'var(--text-secondary)',
+                      cursor: 'pointer', transition: 'all .15s',
+                    }}
+                  >Save to Library</div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Generating placeholder */}
+      {generating && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          {[0, 1, 2, 3].map(i => (
+            <div key={i} style={{
+              aspectRatio: '1', borderRadius: 'var(--radius)',
+              background: 'var(--surface)', display: 'flex',
+              alignItems: 'center', justifyContent: 'center',
+            }}>
+              <span style={{ fontSize: 11, color: 'var(--text-tertiary)', animation: 'pulse 1.5s ease-in-out infinite' }}>
+                Generating...
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function LibraryGrid({ data }) {
   if (!Array.isArray(data) || data.length === 0) {
     return <Empty text="No content generated yet" />
   }
@@ -632,29 +1243,6 @@ function DetailsTab({ agent, onSave, onDelete, saving, saved }) {
   }
 
   const update = (key, value) => setForm(prev => ({ ...prev, [key]: value }))
-
-  const labelStyle = {
-    fontSize: 11, color: 'var(--text-tertiary)', textTransform: 'uppercase',
-    letterSpacing: '0.5px', marginBottom: 6, display: 'block',
-  }
-  const inputStyle = {
-    width: '100%', background: 'var(--surface-hover)', borderRadius: 10,
-    padding: '10px 14px', fontSize: 13, color: 'var(--text-primary)',
-  }
-  const sectionStyle = {
-    background: 'var(--surface)', borderRadius: 'var(--radius)', padding: 22,
-    display: 'flex', flexDirection: 'column', gap: 16,
-  }
-  const toggleStyle = (active) => ({
-    width: 36, height: 20, borderRadius: 10,
-    background: active ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.08)',
-    position: 'relative', cursor: 'pointer', transition: 'background 0.2s', flexShrink: 0,
-  })
-  const toggleDot = (active) => ({
-    width: 14, height: 14, borderRadius: '50%',
-    background: active ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.3)',
-    position: 'absolute', top: 3, left: active ? 19 : 3, transition: 'all 0.2s',
-  })
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
